@@ -39,6 +39,18 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 if not OPENAI_API_KEY:
     raise ValueError("OPENAI_API_KEY environment variable is required")
 
+# PracticePanther API Configuration
+PRACTICE_PANTHER_BASE_URL = os.getenv(
+    'PRACTICE_PANTHER_BASE_URL', 'https://app.practicepanther.com')
+PRACTICE_PANTHER_CLIENT_ID = os.getenv('PRACTICE_PANTHER_CLIENT_ID')
+PRACTICE_PANTHER_CLIENT_SECRET = os.getenv('PRACTICE_PANTHER_CLIENT_SECRET')
+PRACTICE_PANTHER_REDIRECT_URI = os.getenv('PRACTICE_PANTHER_REDIRECT_URI')
+
+# Default time entry settings
+DEFAULT_TIME_ENTRY_DURATION_MINUTES = int(
+    os.getenv('DEFAULT_TIME_ENTRY_DURATION_MINUTES', '15'))
+DEFAULT_HOURLY_RATE = float(os.getenv('DEFAULT_HOURLY_RATE', '250.00'))
+
 # Application definition
 
 INSTALLED_APPS = [

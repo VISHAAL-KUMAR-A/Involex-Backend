@@ -2,10 +2,18 @@ from django.shortcuts import render
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import api_view, permission_classes
 from django.conf import settings
 import openai
 import time
-from .serializers import EmailSummarySerializer, EmailSummaryResponseSerializer
+from .serializers import (
+    EmailSummarySerializer, EmailSummaryResponseSerializer,
+    PracticePantherUserSerializer, EmailSummaryTimeEntrySerializer,
+    OAuthCallbackSerializer, MatterSerializer, TimeEntryCreateSerializer
+)
+from .services import PracticePantherOAuthService, PracticePantherTimeEntryService
+from .models import PracticePantherUser, EmailSummaryTimeEntry
 
 # Add debugging imports
 import json
@@ -13,6 +21,7 @@ import logging
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
+from django.contrib.auth.models import User
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -23,7 +32,9 @@ class EmailSummaryAPIView(APIView):
     """
     API View to summarize emails using OpenAI GPT model.
     Specifically designed for lawyers to create billable entries.
+    Now includes automatic PracticePanther time entry creation.
     """
+    permission_classes = []  # Remove authentication requirement for now
 
     def post(self, request):
         start_time = time.time()
@@ -41,6 +52,10 @@ class EmailSummaryAPIView(APIView):
         sender_email = validated_data.get('sender_email', '')
         recipient_email = validated_data.get('recipient_email', '')
         subject = validated_data.get('subject', '')
+        duration_minutes = validated_data.get(
+            'duration_minutes', settings.DEFAULT_TIME_ENTRY_DURATION_MINUTES)
+        matter_id = validated_data.get('matter_id')
+        create_time_entry = validated_data.get('create_time_entry', True)
 
         try:
             # Initialize OpenAI client
@@ -81,14 +96,55 @@ class EmailSummaryAPIView(APIView):
 
             processing_time = time.time() - start_time
 
-            # Prepare response
+            # Prepare base response
             response_data = {
                 "summary": summary,
                 "word_count_original": original_word_count,
                 "word_count_summary": summary_word_count,
                 "billable_description": billable_description,
-                "processing_time": round(processing_time, 2)
+                "processing_time": round(processing_time, 2),
+                "time_entry_created": False,
+                "time_entry_details": None
             }
+
+            # Try to create PracticePanther time entry if requested and user is authenticated
+            if create_time_entry and hasattr(request, 'user') and request.user.is_authenticated:
+                try:
+                    time_entry_service = PracticePantherTimeEntryService()
+
+                    # Check if user has PracticePanther configuration
+                    if hasattr(request.user, 'practice_panther_user') and request.user.practice_panther_user.auto_create_time_entries:
+                        email_summary_data = {
+                            'summary': summary,
+                            'billable_description': billable_description,
+                            'subject': subject,
+                            'duration_minutes': duration_minutes
+                        }
+
+                        # Override matter_id if provided in request
+                        if matter_id:
+                            email_summary_data['matter_id'] = matter_id
+
+                        time_entry_result = time_entry_service.create_time_entry(
+                            request.user, email_summary_data
+                        )
+
+                        response_data["time_entry_created"] = time_entry_result.get(
+                            'success', False)
+                        if time_entry_result.get('success'):
+                            response_data["time_entry_details"] = {
+                                "time_entry_id": time_entry_result.get('time_entry_id'),
+                                "hours": time_entry_result.get('hours'),
+                                "rate": time_entry_result.get('rate'),
+                                "total": time_entry_result.get('total')
+                            }
+                        else:
+                            logger.warning(
+                                f"Failed to create time entry: {time_entry_result.get('error')}")
+
+                except Exception as e:
+                    logger.error(f"Error creating time entry: {str(e)}")
+                    # Don't fail the entire request if time entry creation fails
 
             # Validate response data
             response_serializer = EmailSummaryResponseSerializer(
@@ -160,14 +216,193 @@ Please provide a concise professional summary (2-3 sentences) that captures the 
             "endpoint": "/api/summarize-email/",
             "method": "POST",
             "required_fields": ["email_content"],
-            "optional_fields": ["sender_email", "recipient_email", "subject"],
+            "optional_fields": [
+                "sender_email", "recipient_email", "subject",
+                "duration_minutes", "matter_id", "create_time_entry"
+            ],
             "example_request": {
                 "email_content": "Dear Client, I have reviewed your contract...",
                 "sender_email": "lawyer@lawfirm.com",
                 "recipient_email": "client@company.com",
-                "subject": "Contract Review Update"
+                "subject": "Contract Review Update",
+                "duration_minutes": 15,
+                "matter_id": "12345",
+                "create_time_entry": True
             }
         })
+
+
+class PracticePantherOAuthInitView(APIView):
+    """Initialize PracticePanther OAuth flow"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            oauth_service = PracticePantherOAuthService()
+            auth_url = oauth_service.get_authorization_url(
+                state=f"user_{request.user.id}"
+            )
+
+            return Response({
+                "authorization_url": auth_url,
+                "message": "Redirect user to this URL to begin OAuth flow"
+            })
+
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to generate authorization URL: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class PracticePantherOAuthCallbackView(APIView):
+    """Handle PracticePanther OAuth callback"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = OAuthCallbackSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {"error": "Invalid callback data", "details": serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            oauth_service = PracticePantherOAuthService()
+            token = oauth_service.exchange_code_for_token(
+                serializer.validated_data['code'],
+                request.user
+            )
+
+            if token:
+                return Response({
+                    "success": True,
+                    "message": "Successfully connected to PracticePanther",
+                    "expires_at": token.expires_at.isoformat()
+                })
+            else:
+                return Response(
+                    {"error": "Failed to exchange authorization code for token"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        except Exception as e:
+            return Response(
+                {"error": f"OAuth callback failed: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class PracticePantherUserConfigView(APIView):
+    """Manage PracticePanther user configuration"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            pp_user = PracticePantherUser.objects.get(user=request.user)
+            serializer = PracticePantherUserSerializer(pp_user)
+            return Response(serializer.data)
+        except PracticePantherUser.DoesNotExist:
+            return Response(
+                {"error": "PracticePanther configuration not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+    def post(self, request):
+        serializer = PracticePantherUserSerializer(data=request.data)
+        if serializer.is_valid():
+            pp_user, created = PracticePantherUser.objects.update_or_create(
+                user=request.user,
+                defaults=serializer.validated_data
+            )
+
+            response_serializer = PracticePantherUserSerializer(pp_user)
+            return Response(
+                response_serializer.data,
+                status=status.HTTP_201_CREATED if created else status.HTTP_200_OK
+            )
+
+        return Response(
+            {"error": "Invalid configuration data", "details": serializer.errors},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+class PracticePantherMattersView(APIView):
+    """Get user's matters from PracticePanther"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            time_entry_service = PracticePantherTimeEntryService()
+            matters = time_entry_service.get_user_matters(request.user)
+
+            serializer = MatterSerializer(matters, many=True)
+            return Response(serializer.data)
+
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to fetch matters: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class TimeEntryListView(APIView):
+    """List time entries created from email summaries"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        time_entries = EmailSummaryTimeEntry.objects.filter(user=request.user)
+        serializer = EmailSummaryTimeEntrySerializer(time_entries, many=True)
+        return Response(serializer.data)
+
+
+class CreateTimeEntryView(APIView):
+    """Create a standalone time entry"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = TimeEntryCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {"error": "Invalid time entry data", "details": serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            time_entry_service = PracticePantherTimeEntryService()
+
+            validated_data = serializer.validated_data
+            email_summary_data = {
+                'summary': validated_data['description'],
+                'billable_description': validated_data['description'],
+                'subject': 'Manual Time Entry',
+                'duration_minutes': validated_data['duration_minutes']
+            }
+
+            if 'matter_id' in validated_data:
+                email_summary_data['matter_id'] = validated_data['matter_id']
+
+            result = time_entry_service.create_time_entry(
+                request.user, email_summary_data)
+
+            if result.get('success'):
+                return Response({
+                    "success": True,
+                    "time_entry_id": result.get('time_entry_id'),
+                    "details": result
+                })
+            else:
+                return Response(
+                    {"error": result.get('error')},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to create time entry: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 # DEBUG VIEW - Remove after debugging
@@ -214,7 +449,9 @@ def summarize_email_debug_view(request):
                     'word_count_original': len(data['email_content'].split()),
                     'word_count_summary': 15,
                     'billable_description': f"Email analysis for {data['subject']}",
-                    'processing_time': 0.5
+                    'processing_time': 0.5,
+                    'time_entry_created': False,
+                    'time_entry_details': None
                 })
 
             else:

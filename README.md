@@ -1,143 +1,207 @@
-# Involex Backend - Email Summarization API
+# Involex Backend - Email Summarization with PracticePanther Integration
 
-A Django REST API designed for lawyers to automatically summarize client emails using OpenAI's GPT model. Perfect for creating billable entries in practice management systems like PracticePanther, Clio, MyCase, etc.
+A Django REST API that provides AI-powered email summarization specifically designed for legal professionals, with automatic billable time entry creation in PracticePanther.
 
 ## Features
 
-- 🤖 AI-powered email summarization using OpenAI GPT-3.5-turbo
-- ⚖️ Specialized for legal professionals and billing purposes
-- 🔗 CORS-enabled for Chrome extension integration
-- 📊 Word count analysis (original vs. summary)
-- 📝 Auto-formatted billable descriptions
-- ⚡ Fast processing with timing metrics
+- **AI-Powered Email Summarization**: Uses OpenAI GPT to create professional legal summaries
+- **PracticePanther Integration**: Automatically creates billable time entries
+- **OAuth 2.0 Authentication**: Secure connection to PracticePanther
+- **Flexible Time Tracking**: Customizable duration and hourly rates
+- **Matter Management**: Link time entries to specific matters
+- **Chrome Extension Ready**: CORS configured for browser extensions
 
-## Setup Instructions
+## Quick Setup
 
-### 1. Clone the Repository
-
-```bash
-git clone <your-repo-url>
-cd Involex_Backend
-```
-
-### 2. Install Dependencies
+### 1. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Environment Configuration
+### 2. Environment Configuration
 
-Copy the example environment file and add your API key:
+Copy `.env.example` to `.env` and configure your settings:
 
 ```bash
-# Copy the example file
-cp .env.example .env
-```
+# Django Configuration
+SECRET_KEY=your-secret-key-here
+DEBUG=True
+ALLOWED_HOSTS=localhost,127.0.0.1,*
 
-Then edit `.env` and add your OpenAI API key:
-
-```env
 # OpenAI Configuration
-OPENAI_API_KEY=your-actual-openai-api-key-here
+OPENAI_API_KEY=your-openai-api-key-here
+
+# PracticePanther API Configuration
+PRACTICE_PANTHER_CLIENT_ID=your-client-id
+PRACTICE_PANTHER_CLIENT_SECRET=your-client-secret
+PRACTICE_PANTHER_REDIRECT_URI=http://localhost:8000/api/practice-panther/oauth/callback/
+
+# Default Settings
+DEFAULT_TIME_ENTRY_DURATION_MINUTES=15
+DEFAULT_HOURLY_RATE=250.00
 ```
 
-### 4. Run Database Migrations
+### 3. Database Setup
 
 ```bash
 python manage.py migrate
+python manage.py createsuperuser
 ```
 
-### 5. Start the Development Server
+### 4. Run Server
 
 ```bash
 python manage.py runserver
 ```
 
-The API will be available at: `http://localhost:8000/`
+## PracticePanther API Setup
+
+### 1. Request API Access
+
+1. Submit a request for API access to PracticePanther
+2. Receive your `CLIENT_ID` and `CLIENT_SECRET`
+3. Configure your redirect URI in PracticePanther's developer settings
+
+### 2. OAuth Flow
+
+The integration uses OAuth 2.0 for secure authentication:
+
+1. **Initialize OAuth**: `GET /api/practice-panther/oauth/init/`
+2. **User Authorization**: Redirect to PracticePanther
+3. **Handle Callback**: `POST /api/practice-panther/oauth/callback/`
+4. **Token Management**: Automatic refresh handling
 
 ## API Endpoints
 
 ### Email Summarization
-- **URL**: `/api/summarize-email/`
-- **Method**: `POST`
-- **Content-Type**: `application/json`
 
-### Request Body
+#### `POST /api/summarize-email/`
 
+Summarize an email and optionally create a time entry.
+
+**Request Body:**
 ```json
 {
-    "email_content": "Dear Client, I have reviewed your contract and found several issues that need to be addressed before signing...",
-    "sender_email": "lawyer@lawfirm.com",
-    "recipient_email": "client@company.com",
-    "subject": "Contract Review Update"
+  "email_content": "Dear Client, I have reviewed your contract...",
+  "sender_email": "lawyer@lawfirm.com",
+  "recipient_email": "client@company.com",
+  "subject": "Contract Review Update",
+  "duration_minutes": 15,
+  "matter_id": "12345",
+  "create_time_entry": true
 }
 ```
 
-**Required Fields:**
-- `email_content` (string): The full content of the email to be summarized
-
-**Optional Fields:**
-- `sender_email` (string): Email address of the sender
-- `recipient_email` (string): Email address of the recipient
-- `subject` (string): Subject line of the email
-
-### Response
-
+**Response:**
 ```json
 {
-    "summary": "Reviewed client contract and identified several issues requiring attention before execution. Provided recommendations for contract modifications and next steps for resolution.",
-    "word_count_original": 150,
-    "word_count_summary": 25,
-    "billable_description": "Email correspondence with client@company.com regarding Contract Review Update. Reviewed client contract and identified several issues requiring attention before execution. Provided recommendations for contract modifications and next steps for resolution.",
-    "processing_time": 2.45
+  "summary": "Reviewed client contract and identified key issues...",
+  "word_count_original": 250,
+  "word_count_summary": 45,
+  "billable_description": "Email correspondence with client@company.com regarding Contract Review Update. Reviewed client contract and identified key issues...",
+  "processing_time": 1.23,
+  "time_entry_created": true,
+  "time_entry_details": {
+    "time_entry_id": "pp-12345",
+    "hours": 0.25,
+    "rate": 250.00,
+    "total": 62.50
+  }
 }
 ```
 
-## Testing with Postman
+### PracticePanther OAuth
 
-### Step 1: Create a New Request
-1. Open Postman
-2. Click "New" → "Request"
-3. Name it "Email Summary Test"
+#### `GET /api/practice-panther/oauth/init/`
+Initialize OAuth flow (requires authentication).
 
-### Step 2: Configure the Request
-1. **Method**: Select `POST`
-2. **URL**: `http://localhost:8000/api/summarize-email/`
-3. **Headers**: 
-   - Key: `Content-Type`, Value: `application/json`
+#### `POST /api/practice-panther/oauth/callback/`
+Handle OAuth callback with authorization code.
 
-### Step 3: Add Request Body
-1. Go to the "Body" tab
-2. Select "raw" and "JSON"
-3. Paste this example:
+### Configuration
+
+#### `GET /api/practice-panther/config/`
+Get user's PracticePanther configuration.
+
+#### `POST /api/practice-panther/config/`
+Set up PracticePanther configuration:
 
 ```json
 {
-    "email_content": "Dear Mr. Johnson, I have completed the review of your employment contract dated March 15, 2024. After careful analysis, I have identified several areas that require modification to better protect your interests. Specifically, the non-compete clause in Section 4.2 is overly broad and may not be enforceable in our jurisdiction. I recommend we negotiate to limit the geographical scope to the immediate metropolitan area and reduce the time period from 24 months to 12 months. Additionally, the intellectual property provisions in Section 6 need clarification regarding work done outside of business hours. I have prepared a marked-up version of the contract with my recommendations and will send it under separate cover. Please review my comments and let me know if you would like to schedule a call to discuss the proposed changes before I reach out to opposing counsel. I anticipate this negotiation process will take approximately 2-3 weeks to complete.",
-    "sender_email": "sarah.attorney@lawfirm.com",
-    "recipient_email": "client@company.com",
-    "subject": "Employment Contract Review - Action Items"
+  "practice_panther_user_id": "user123",
+  "default_matter_id": "matter456",
+  "default_hourly_rate": 275.00,
+  "auto_create_time_entries": true
 }
 ```
 
-### Step 4: Send the Request
-1. Click "Send"
-2. You should receive a JSON response with the summary and billing information
+### Matter Management
 
-### Alternative Test with Minimal Data
+#### `GET /api/practice-panther/matters/`
+Get list of available matters from PracticePanther.
+
+### Time Entry Management
+
+#### `GET /api/time-entries/`
+List all time entries created from email summaries.
+
+#### `POST /api/time-entries/create/`
+Create a standalone time entry:
+
 ```json
 {
-    "email_content": "Dear Client, I have reviewed your case files and prepared the motion for summary judgment. The deadline for filing is next Friday. Please review the attached draft and provide your feedback by Wednesday so I can incorporate any changes before submission."
+  "description": "Research case law for client matter",
+  "duration_minutes": 30,
+  "matter_id": "matter123",
+  "hourly_rate": 250.00
 }
 ```
 
-## Chrome Extension Integration
+## Usage Examples
 
-The API is configured with CORS headers to work with Chrome extensions:
+### Basic Email Summarization (No Authentication Required)
+
+```python
+import requests
+
+response = requests.post('http://localhost:8000/api/summarize-email/', json={
+    "email_content": "Dear Client, I have completed the contract review...",
+    "subject": "Contract Review Complete",
+    "create_time_entry": False  # Don't create time entry
+})
+
+summary_data = response.json()
+print(summary_data['summary'])
+```
+
+### With PracticePanther Integration
+
+```python
+# 1. First authenticate user and set up PracticePanther connection
+# 2. Then summarize email with automatic time entry creation
+
+response = requests.post('http://localhost:8000/api/summarize-email/', 
+    json={
+        "email_content": "Dear Client, I have completed the contract review...",
+        "subject": "Contract Review Complete",
+        "duration_minutes": 20,
+        "matter_id": "matter123",
+        "create_time_entry": True
+    },
+    headers={'Authorization': 'Bearer your-token-here'}
+)
+
+result = response.json()
+if result['time_entry_created']:
+    print(f"Time entry created: {result['time_entry_details']['time_entry_id']}")
+    print(f"Billable amount: ${result['time_entry_details']['total']}")
+```
+
+### Chrome Extension Integration
 
 ```javascript
-// Example Chrome extension usage
+// From your Chrome extension
 fetch('http://localhost:8000/api/summarize-email/', {
     method: 'POST',
     headers: {
@@ -145,51 +209,95 @@ fetch('http://localhost:8000/api/summarize-email/', {
     },
     body: JSON.stringify({
         email_content: emailText,
+        subject: emailSubject,
         sender_email: senderEmail,
         recipient_email: recipientEmail,
-        subject: emailSubject
+        duration_minutes: 15,
+        create_time_entry: true
     })
 })
 .then(response => response.json())
 .then(data => {
-    // Use data.billable_description for practice management systems
-    console.log('Billable Entry:', data.billable_description);
+    console.log('Summary:', data.summary);
+    if (data.time_entry_created) {
+        console.log('Time entry created in PracticePanther!');
+    }
 });
 ```
 
+## Admin Interface
+
+Access the Django admin at `http://localhost:8000/admin/` to manage:
+
+- **PracticePanther Tokens**: OAuth tokens and expiration
+- **PracticePanther Users**: User configurations and settings
+- **Email Summary Time Entries**: All created time entries and sync status
+
 ## Error Handling
 
-The API returns appropriate HTTP status codes:
+The API includes comprehensive error handling:
 
-- `200 OK`: Successful summarization
-- `400 Bad Request`: Invalid input data
-- `502 Bad Gateway`: OpenAI API error
-- `500 Internal Server Error`: Server error
+- **OpenAI API errors**: Graceful handling of rate limits and API issues
+- **PracticePanther sync failures**: Local storage with error logging
+- **Authentication errors**: Clear error messages for OAuth issues
+- **Validation errors**: Detailed field-level validation feedback
 
-Example error response:
-```json
-{
-    "error": "Invalid input data",
-    "details": {
-        "email_content": ["This field is required."]
-    }
-}
+## Security Features
+
+- **OAuth 2.0**: Secure token-based authentication
+- **Token refresh**: Automatic token renewal
+- **CORS configuration**: Secure cross-origin requests
+- **Input validation**: Comprehensive request validation
+- **Error logging**: Detailed logging for debugging
+
+## Development
+
+### Running Tests
+
+```bash
+python manage.py test
 ```
 
-## Security Notes
+### Making Migrations
 
-- The OpenAI API key is configured in `settings.py`
-- For production, move sensitive keys to environment variables
-- CSRF protection is disabled for API endpoints
-- CORS is set to allow all origins for development
+```bash
+python manage.py makemigrations
+python manage.py migrate
+```
 
-## Practice Management Integration
+### Debugging
 
-The `billable_description` field in the response is specifically formatted for easy integration with:
-- PracticePanther
-- Clio
-- MyCase
-- TimeSolv
-- And other legal practice management systems
+Enable the debug endpoint for testing:
 
-Simply use the `billable_description` as the entry description and add appropriate time/rate information for your billable entries. 
+```bash
+# Test endpoint available at /api/debug-summarize-email/
+```
+
+## Troubleshooting
+
+### Common Issues
+
+1. **PracticePanther API Access**: Ensure you have requested and received API credentials
+2. **OAuth Redirect URI**: Must match exactly in PracticePanther settings
+3. **Token Expiration**: Tokens are automatically refreshed, but check logs for issues
+4. **CORS Issues**: Verify CORS settings for Chrome extension integration
+
+### Logs
+
+Check Django logs for detailed error information:
+
+```bash
+# In development, logs output to console
+python manage.py runserver --verbosity=2
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Add tests for new functionality
+4. Submit a pull request
+
+## License
+
+This project is proprietary software. All rights reserved. 
