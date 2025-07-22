@@ -7,7 +7,18 @@ import openai
 import time
 from .serializers import EmailSummarySerializer, EmailSummaryResponseSerializer
 
+# Add debugging imports
+import json
+import logging
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 
+# Set up logging
+logger = logging.getLogger(__name__)
+
+
+@method_decorator(csrf_exempt, name='dispatch')  # Add this for CSRF exemption
 class EmailSummaryAPIView(APIView):
     """
     API View to summarize emails using OpenAI GPT model.
@@ -137,6 +148,10 @@ Please provide a concise professional summary (2-3 sentences) that captures the 
 
         return billable_description
 
+    def options(self, request, *args, **kwargs):
+        """Handle CORS preflight requests"""
+        return Response({'status': 'ok'}, status=status.HTTP_200_OK)
+
     def get(self, request):
         """GET method to provide API documentation"""
         return Response({
@@ -153,3 +168,72 @@ Please provide a concise professional summary (2-3 sentences) that captures the 
                 "subject": "Contract Review Update"
             }
         })
+
+
+# DEBUG VIEW - Remove after debugging
+@csrf_exempt
+def summarize_email_debug_view(request):
+    """
+    Temporary debugging view for email summarization
+    """
+    # Add extensive debugging
+    logger.info(f"🔧 DEBUG: Request method: {request.method}")
+    logger.info(f"🔧 DEBUG: Request headers: {dict(request.headers)}")
+    logger.info(f"🔧 DEBUG: Request content type: {request.content_type}")
+    logger.info(f"🔧 DEBUG: Request body (raw): {request.body}")
+
+    if request.method == 'POST':
+        try:
+            # Try to parse JSON
+            if request.content_type == 'application/json':
+                data = json.loads(request.body)
+                logger.info(f"🔧 DEBUG: Parsed JSON data: {data}")
+
+                # Check required fields
+                required_fields = ['email_content',
+                                   'sender_email', 'recipient_email', 'subject']
+                missing_fields = [
+                    field for field in required_fields if field not in data or not data[field]]
+
+                if missing_fields:
+                    logger.error(
+                        f"🔧 DEBUG: Missing required fields: {missing_fields}")
+                    return JsonResponse({
+                        'error': f'Missing required fields: {missing_fields}',
+                        'received_data': data
+                    }, status=400)
+
+                logger.info(f"✅ DEBUG: All required fields present")
+                logger.info(
+                    f"🔧 DEBUG: Email content: {data['email_content'][:100]}...")
+
+                # Your existing summarization logic here...
+                # For now, return a test response
+                return JsonResponse({
+                    'summary': f"DEBUG: Received email from {data['sender_email']} to {data['recipient_email']} about {data['subject']}",
+                    'word_count_original': len(data['email_content'].split()),
+                    'word_count_summary': 15,
+                    'billable_description': f"Email analysis for {data['subject']}",
+                    'processing_time': 0.5
+                })
+
+            else:
+                logger.error(
+                    f"🔧 DEBUG: Invalid content type: {request.content_type}")
+                return JsonResponse({'error': f'Invalid content type: {request.content_type}'}, status=400)
+
+        except json.JSONDecodeError as e:
+            logger.error(f"🔧 DEBUG: JSON decode error: {e}")
+            logger.error(f"🔧 DEBUG: Request body: {request.body}")
+            return JsonResponse({'error': f'Invalid JSON: {e}'}, status=400)
+
+        except Exception as e:
+            logger.error(f"🔧 DEBUG: Unexpected error: {e}")
+            return JsonResponse({'error': f'Server error: {e}'}, status=500)
+
+    elif request.method == 'OPTIONS':
+        # Handle CORS preflight
+        return JsonResponse({'status': 'ok'})
+
+    else:
+        return JsonResponse({'error': 'Method not allowed'}, status=405)
