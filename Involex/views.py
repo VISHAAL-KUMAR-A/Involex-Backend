@@ -22,6 +22,8 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.contrib.auth.models import User
+from rest_framework.authtoken.models import Token
+from datetime import datetime
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -58,32 +60,41 @@ class EmailSummaryAPIView(APIView):
         create_time_entry = validated_data.get('create_time_entry', True)
 
         try:
-            # Initialize OpenAI client
-            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+            # Check if this is a test API key
+            if settings.OPENAI_API_KEY.startswith('sk-test-key'):
+                # Mock response for testing
+                summary = f"MOCK: Reviewed email from {sender_email} regarding {subject}. This is a test summary showing that the legal email analysis system is working correctly. Key points identified and next steps recommended."
+                logger.info("Using mock OpenAI response for testing")
+            else:
+                # Initialize OpenAI client
+                client = openai.OpenAI(
+                    api_key=settings.OPENAI_API_KEY,
+                    timeout=30.0
+                )
 
-            # Create the prompt for legal email summarization
-            prompt = self._create_legal_summary_prompt(
-                email_content, sender_email, recipient_email, subject
-            )
+                # Create the prompt for legal email summarization
+                prompt = self._create_legal_summary_prompt(
+                    email_content, sender_email, recipient_email, subject
+                )
 
-            # Call OpenAI API
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a legal assistant helping lawyers create concise, professional summaries of client communications for billing purposes."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                max_tokens=500,
-                temperature=0.3
-            )
+                # Call OpenAI API
+                response = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a legal assistant helping lawyers create concise, professional summaries of client communications for billing purposes."
+                        },
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    max_tokens=500,
+                    temperature=0.3
+                )
 
-            summary = response.choices[0].message.content.strip()
+                summary = response.choices[0].message.content.strip()
 
             # Calculate word counts
             original_word_count = len(email_content.split())
@@ -474,3 +485,113 @@ def summarize_email_debug_view(request):
 
     else:
         return JsonResponse({'error': 'Method not allowed'}, status=405)
+
+
+@api_view(['POST'])
+@csrf_exempt
+def login_view(request):
+    """Simple token-based login for Chrome extension"""
+    username = request.data.get('username')
+    password = request.data.get('password')
+
+    if not username or not password:
+        return Response({
+            'error': 'Username and password required'
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    user = authenticate(username=username, password=password)
+    if user:
+        token, created = Token.objects.get_or_create(user=user)
+
+        # Check if user has PracticePanther configuration
+        has_pp_config = hasattr(user, 'practice_panther_user')
+        has_pp_token = hasattr(user, 'practice_panther_token')
+
+        return Response({
+            'token': token.key,
+            'user_id': user.id,
+            'username': user.username,
+            'has_practice_panther_config': has_pp_config,
+            'has_practice_panther_token': has_pp_token,
+            'message': 'Login successful'
+        })
+
+    return Response({
+        'error': 'Invalid credentials'
+    }, status=status.HTTP_401_UNAUTHORIZED)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def user_status_view(request):
+    """Get current user status and PracticePanther configuration"""
+    user = request.user
+
+    # Check PracticePanther configuration
+    pp_config = None
+    if hasattr(user, 'practice_panther_user'):
+        pp_config = {
+            'practice_panther_user_id': user.practice_panther_user.practice_panther_user_id,
+            'default_hourly_rate': float(user.practice_panther_user.default_hourly_rate),
+            'auto_create_time_entries': user.practice_panther_user.auto_create_time_entries,
+            'default_matter_id': user.practice_panther_user.default_matter_id
+        }
+
+    # Check token status
+    token_status = None
+    if hasattr(user, 'practice_panther_token'):
+        token = user.practice_panther_token
+        token_status = {
+            'has_token': True,
+            'expires_at': token.expires_at.isoformat(),
+            'is_expired': token.expires_at <= datetime.now()
+        }
+
+    return Response({
+        'user': {
+            'id': user.id,
+            'username': user.username,
+            'email': user.email
+        },
+        'practice_panther': {
+            'configured': pp_config is not None,
+            'config': pp_config,
+            'token_status': token_status
+        }
+    })
+
+
+@api_view(['POST'])
+@csrf_exempt
+def register_view(request):
+    """Simple user registration for testing"""
+    username = request.data.get('username')
+    password = request.data.get('password')
+    email = request.data.get('email', '')
+
+    if not username or not password:
+        return Response({
+            'error': 'Username and password required'
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    if User.objects.filter(username=username).exists():
+        return Response({
+            'error': 'Username already exists'
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        user = User.objects.create_user(
+            username=username, password=password, email=email)
+        token, created = Token.objects.get_or_create(user=user)
+
+        return Response({
+            'token': token.key,
+            'user_id': user.id,
+            'username': user.username,
+            'message': 'User created successfully'
+        }, status=status.HTTP_201_CREATED)
+
+    except Exception as e:
+        return Response({
+            'error': f'Failed to create user: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

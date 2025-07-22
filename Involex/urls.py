@@ -3,7 +3,8 @@ from .views import (
     EmailSummaryAPIView, summarize_email_debug_view,
     PracticePantherOAuthInitView, PracticePantherOAuthCallbackView,
     PracticePantherUserConfigView, PracticePantherMattersView,
-    TimeEntryListView, CreateTimeEntryView
+    TimeEntryListView, CreateTimeEntryView,
+    login_view, user_status_view, register_view
 )
 
 app_name = 'involex'
@@ -11,6 +12,11 @@ app_name = 'involex'
 urlpatterns = [
     # Email summarization
     path('summarize-email/', EmailSummaryAPIView.as_view(), name='email_summary'),
+
+    # Authentication
+    path('auth/login/', login_view, name='login'),
+    path('auth/register/', register_view, name='register'),
+    path('auth/status/', user_status_view, name='user_status'),
 
     # PracticePanther OAuth
     path('practice-panther/oauth/init/',
