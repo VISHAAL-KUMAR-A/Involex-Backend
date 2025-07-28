@@ -149,6 +149,8 @@ REST_FRAMEWORK = {
 # CORS Configuration for Chrome Extension
 CORS_ALLOWED_ORIGINS = [
     "chrome-extension://*",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
 ]
 
 CORS_ALLOW_ALL_ORIGINS = os.getenv(
@@ -164,10 +166,13 @@ CORS_ALLOW_HEADERS = [
     'user-agent',
     'x-csrftoken',
     'x-requested-with',
+    'x-extension-id'
 ]
+CORS_ALLOW_CREDENTIALS = True
 
 # Disable CSRF for API endpoints (since you mentioned no token needed)
-CSRF_TRUSTED_ORIGINS = ['http://localhost:8000', 'http://127.0.0.1:8000']
+CSRF_TRUSTED_ORIGINS = ['http://localhost:8000',
+                        'http://127.0.0.1:8000', 'chrome-extension://*']
 
 # Logging Configuration for debugging
 LOGGING = {
