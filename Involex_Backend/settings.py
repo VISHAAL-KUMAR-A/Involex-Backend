@@ -207,3 +207,8 @@ LOGGING = {
         'level': 'INFO',
     },
 }
+
+# Clio API Settings
+CLIO_CLIENT_ID = os.environ.get('CLIO_CLIENT_ID')
+CLIO_CLIENT_SECRET = os.environ.get('CLIO_CLIENT_SECRET')
+CLIO_REDIRECT_URI = os.environ.get('CLIO_REDIRECT_URI')

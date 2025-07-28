@@ -18,6 +18,10 @@ class EmailSummarySerializer(serializers.Serializer):
         required=False,
         help_text="Subject line of the email"
     )
+    matter_id = serializers.CharField(
+        required=False,
+        help_text="Clio matter ID to associate the billable entry with"
+    )
 
     def validate_email_content(self, value):
         if not value or len(value.strip()) < 10:
@@ -37,3 +41,5 @@ class EmailSummaryResponseSerializer(serializers.Serializer):
         help_text="Formatted billable entry description")
     processing_time = serializers.FloatField(
         help_text="Time taken to process the request in seconds")
+    clio_entry_created = serializers.BooleanField(
+        help_text="Whether a billable entry was created in Clio")

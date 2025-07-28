@@ -1,11 +1,11 @@
 from django.urls import path
-from .views import EmailSummaryAPIView, summarize_email_debug_view
+from .views import EmailSummaryAPIView, ClioAuthView, ClioCallbackView, ClioMattersView
 
 app_name = 'involex'
 
 urlpatterns = [
     path('summarize-email/', EmailSummaryAPIView.as_view(), name='email_summary'),
-    # DEBUG URL - Remove after debugging
-    path('debug-summarize-email/', summarize_email_debug_view,
-         name='debug_email_summary'),
+    path('clio/auth/', ClioAuthView.as_view(), name='clio_auth'),
+    path('clio/callback/', ClioCallbackView.as_view(), name='clio_callback'),
+    path('clio/matters/', ClioMattersView.as_view(), name='clio_matters'),
 ]
