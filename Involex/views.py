@@ -25,7 +25,18 @@ class EmailSummaryAPIView(APIView):
     Specifically designed for lawyers to create billable entries.
     """
 
+    def options(self, request, *args, **kwargs):
+        logger.info(
+            f"🔧 DEBUG: OPTIONS request received with headers: {dict(request.headers)}")
+        response = super().options(request, *args, **kwargs)
+        return response
+
     def post(self, request):
+        logger.info(f"🔧 DEBUG: POST request received")
+        logger.info(f"🔧 DEBUG: Request headers: {dict(request.headers)}")
+        # Log first 500 chars of body
+        logger.info(f"🔧 DEBUG: Request body: {request.body[:500]}...")
+
         start_time = time.time()
 
         # Validate input data
