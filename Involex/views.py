@@ -1,13 +1,21 @@
-from django.shortcuts import render
+from django.shortcuts import render, redirect
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from django.conf import settings
 import openai
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from .serializers import EmailSummarySerializer, EmailSummaryResponseSerializer
 from .services import ClioAPIService
+from .models import ClioUser
+import requests
+import json
+import logging
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
+from django.middleware.csrf import get_token
 
 # Add debugging imports
 import json
@@ -46,8 +54,12 @@ class EmailSummaryAPIView(APIView):
         sender_email = validated_data.get('sender_email', '')
         recipient_email = validated_data.get('recipient_email', '')
         subject = validated_data.get('subject', '')
-        # New field for Clio matter ID
         matter_id = validated_data.get('matter_id')
+        # Get region from request
+        region = validated_data.get('region', 'NA').upper()
+
+        if region not in ['NA', 'EU', 'CA']:
+            region = 'NA'
 
         try:
             # Initialize OpenAI client
@@ -90,6 +102,21 @@ class EmailSummaryAPIView(APIView):
             clio_entry = None
             if matter_id and sender_email:
                 try:
+                    # Try to get existing user with correct region
+                    try:
+                        user = ClioUser.objects.get(email=sender_email)
+                        # Update region if different
+                        if user.region != region:
+                            user.region = region
+                            user.save()
+                    except ClioUser.DoesNotExist:
+                        logger.error(
+                            f"No ClioUser found for email: {sender_email}")
+                        return Response(
+                            {"error": "User not authenticated with Clio. Please login first."},
+                            status=status.HTTP_401_UNAUTHORIZED
+                        )
+
                     clio_service = ClioAPIService(sender_email)
                     # Assuming 6 minutes (360 seconds) for email communication
                     clio_entry = clio_service.create_time_entry(
@@ -269,27 +296,54 @@ def summarize_email_debug_view(request):
         return JsonResponse({'error': 'Method not allowed'}, status=405)
 
 
+@method_decorator(csrf_exempt, name='dispatch')
 class ClioAuthView(APIView):
     """Handle Clio OAuth2 authentication flow"""
 
     def get(self, request):
         """Start OAuth flow by redirecting to Clio"""
+        logger.info("Starting Clio OAuth flow")
+
+        # Always use NA region for India
+        base_url = 'https://app.clio.com'
+
+        logger.info(f"Using base URL: {base_url}")
+        logger.info(f"Using client_id: {settings.CLIO_CLIENT_ID[:5]}...")
+        logger.info(f"Redirect URI: {settings.CLIO_REDIRECT_URI}")
+
         auth_url = (
-            "https://app.clio.com/oauth/authorize?"
+            f"{base_url}/oauth/authorize?"
             f"client_id={settings.CLIO_CLIENT_ID}&"
             f"response_type=code&"
             f"redirect_uri={settings.CLIO_REDIRECT_URI}"
         )
-        return Response({"auth_url": auth_url})
+
+        logger.info(
+            f"Generated auth URL (client_id hidden): {auth_url.replace(settings.CLIO_CLIENT_ID, 'CLIENT_ID')}")
+
+        return Response({
+            "auth_url": auth_url
+        }, headers={
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+        })
 
 
+@method_decorator(csrf_exempt, name='dispatch')
 class ClioCallbackView(APIView):
     """Handle Clio OAuth callback"""
 
     def get(self, request):
         """Exchange authorization code for access token"""
         code = request.GET.get('code')
+        base_url = 'https://app.clio.com'  # Always use NA region
+
+        logger.info(
+            f"Received OAuth callback with code: {code[:5] if code else 'None'}...")
+
         if not code:
+            logger.error("No authorization code provided in callback")
             return Response(
                 {"error": "No authorization code provided"},
                 status=status.HTTP_400_BAD_REQUEST
@@ -297,8 +351,9 @@ class ClioCallbackView(APIView):
 
         try:
             # Exchange code for tokens
-            response = requests.post(
-                "https://app.clio.com/oauth/token",
+            logger.info("Exchanging code for tokens...")
+            token_response = requests.post(
+                f"{base_url}/oauth/token",
                 data={
                     "client_id": settings.CLIO_CLIENT_ID,
                     "client_secret": settings.CLIO_CLIENT_SECRET,
@@ -308,34 +363,69 @@ class ClioCallbackView(APIView):
                 }
             )
 
-            if response.status_code != 200:
+            logger.info(
+                f"Token exchange response status: {token_response.status_code}")
+            logger.info(f"Token exchange response: {token_response.text}")
+
+            if token_response.status_code != 200:
+                error_msg = token_response.text
+                logger.error(f"Token exchange failed: {error_msg}")
                 return Response(
-                    {"error": "Failed to get access token"},
+                    {"error": f"Failed to get access token: {error_msg}"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            token_data = response.json()
+            token_data = token_response.json()
+            logger.info("Successfully got token data")
 
             # Get user info from Clio
+            logger.info("Fetching user info from Clio...")
             user_response = requests.get(
-                "https://app.clio.com/api/v4/users/who_am_i",
+                f"{base_url}/api/v4/users/who_am_i",
                 headers={
                     "Authorization": f"Bearer {token_data['access_token']}"
                 }
             )
 
+            logger.info(
+                f"User info response status: {user_response.status_code}")
             if user_response.status_code != 200:
+                error_msg = user_response.text
+                logger.error(f"Failed to get user info: {error_msg}")
                 return Response(
-                    {"error": "Failed to get user info"},
+                    {"error": f"Failed to get user info: {error_msg}"},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
             user_data = user_response.json()
-            clio_user_id = user_data['data']['id']
-            email = user_data['data']['attributes']['email']
+            logger.info(f"User data response: {json.dumps(user_data)}")
+
+            try:
+                # Get user info from the who_am_i response
+                if not user_data.get('data', {}).get('id'):
+                    raise ValueError("Could not find user ID in response")
+
+                clio_user_id = user_data['data']['id']
+                user_name = user_data['data'].get('name', '')
+
+                if not user_name:
+                    raise ValueError("Could not find user name in response")
+
+                # Use name@clio.user as a unique identifier
+                email = f"{user_name.lower().replace(' ', '.')}@clio.user"
+
+                logger.info(
+                    f"Got user info - ID: {clio_user_id}, Name: {user_name}, Generated Email: {email}")
+
+            except (KeyError, ValueError) as e:
+                logger.error(f"Error parsing user data: {str(e)}")
+                return Response(
+                    {"error": f"Failed to parse user data: {str(e)}"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
 
             # Save or update user tokens
-            ClioUser.objects.update_or_create(
+            user, created = ClioUser.objects.update_or_create(
                 email=email,
                 defaults={
                     'access_token': token_data['access_token'],
@@ -345,15 +435,69 @@ class ClioCallbackView(APIView):
                 }
             )
 
-            return Response({
+            action = 'Created new' if created else 'Updated existing'
+            logger.info(f"{action} ClioUser record for {email}")
+
+            # Return JSON response instead of redirect
+            return JsonResponse({
                 "message": "Authentication successful",
-                "email": email
+                "email": email,
+                "status": "success"
             })
 
         except Exception as e:
             logger.error(f"Clio authentication error: {str(e)}")
+            return JsonResponse({
+                "error": str(e),
+                "status": "error"
+            }, status=500)
+
+# Add test endpoint to manually create/update Clio user
+
+
+class TestClioUserView(APIView):
+    """Test endpoint to manually create/update Clio user"""
+
+    def post(self, request):
+        """Create or update a Clio user manually"""
+        email = request.data.get('email')
+        access_token = request.data.get('access_token')
+        refresh_token = request.data.get('refresh_token')
+        region = request.data.get('region', 'NA').upper()
+
+        if not all([email, access_token, refresh_token]):
             return Response(
-                {"error": "Authentication failed"},
+                {"error": "email, access_token, and refresh_token are required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if region not in ['NA', 'EU', 'CA']:
+            region = 'NA'
+
+        try:
+            # Create or update user
+            user, created = ClioUser.objects.update_or_create(
+                email=email,
+                defaults={
+                    'access_token': access_token,
+                    'refresh_token': refresh_token,
+                    'token_expires_at': datetime.now() + timedelta(days=14),  # Set expiry to 14 days
+                    'clio_user_id': 'manual_test',  # Placeholder ID for manual creation
+                    'region': region
+                }
+            )
+
+            action = 'Created' if created else 'Updated'
+            return Response({
+                "message": f"{action} Clio user successfully",
+                "email": email,
+                "region": region
+            })
+
+        except Exception as e:
+            logger.error(f"Error creating test Clio user: {str(e)}")
+            return Response(
+                {"error": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -371,6 +515,22 @@ class ClioMattersView(APIView):
             )
 
         try:
+            # Add debug logging
+            logger.info(f"Fetching matters for email: {user_email}")
+
+            # Check if user exists in database
+            try:
+                user = ClioUser.objects.get(email=user_email)
+                logger.info(f"Found user in database: {user.email}")
+                logger.info(f"Access token exists: {bool(user.access_token)}")
+                logger.info(f"Token expires at: {user.token_expires_at}")
+            except ClioUser.DoesNotExist:
+                logger.error(f"No ClioUser found for email: {user_email}")
+                return Response(
+                    {"error": "User not authenticated with Clio. Please login first."},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+
             clio_service = ClioAPIService(user_email)
             matters = clio_service.get_matters()
 
@@ -380,7 +540,75 @@ class ClioMattersView(APIView):
 
         except Exception as e:
             logger.error(f"Error fetching matters: {str(e)}")
+            # Return more detailed error message
             return Response(
-                {"error": "Failed to fetch matters"},
+                {"error": f"Failed to fetch matters: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class ClioLogoutView(APIView):
+    """Handle Clio logout"""
+
+    def post(self, request):
+        """Clear Clio tokens for a user"""
+        email = request.data.get('email')
+
+        if not email:
+            return Response(
+                {"error": "Email is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = ClioUser.objects.get(email=email)
+            user.delete()
+            return Response({
+                "message": "Successfully logged out",
+                "email": email
+            })
+        except ClioUser.DoesNotExist:
+            return Response({
+                "message": "User was not logged in",
+                "email": email
+            })
+
+
+class TestClioEntryView(APIView):
+    """Test endpoint to create a Clio billable entry"""
+
+    def post(self, request):
+        """Create a test billable entry"""
+        user_email = request.data.get('email')
+        matter_id = request.data.get('matter_id')
+
+        if not user_email or not matter_id:
+            return Response(
+                {"error": "Both email and matter_id are required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            clio_service = ClioAPIService(user_email)
+
+            # Create a test time entry
+            entry = clio_service.create_time_entry(
+                matter_id=matter_id,
+                date=datetime.now(),
+                duration=360,  # 6 minutes
+                description="Test billable entry from Involex",
+                note="This is a test entry to verify Clio integration"
+            )
+
+            return Response({
+                "message": "Test entry created successfully",
+                "entry": entry
+            })
+
+        except Exception as e:
+            logger.error(f"Error creating test entry: {str(e)}")
+            return Response(
+                {"error": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

@@ -211,4 +211,5 @@ LOGGING = {
 # Clio API Settings
 CLIO_CLIENT_ID = os.environ.get('CLIO_CLIENT_ID')
 CLIO_CLIENT_SECRET = os.environ.get('CLIO_CLIENT_SECRET')
-CLIO_REDIRECT_URI = os.environ.get('CLIO_REDIRECT_URI')
+# Update this to point to our backend callback URL
+CLIO_REDIRECT_URI = 'http://127.0.0.1:8000/api/clio/callback/'

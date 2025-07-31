@@ -22,11 +22,22 @@ class EmailSummarySerializer(serializers.Serializer):
         required=False,
         help_text="Clio matter ID to associate the billable entry with"
     )
+    region = serializers.CharField(
+        required=False,
+        help_text="Clio region (NA, EU, or CA)",
+        default='NA'
+    )
 
     def validate_email_content(self, value):
         if not value or len(value.strip()) < 10:
             raise serializers.ValidationError(
                 "Email content must be at least 10 characters long")
+        return value
+
+    def validate_region(self, value):
+        value = value.upper()
+        if value not in ['NA', 'EU', 'CA']:
+            return 'NA'
         return value
 
 

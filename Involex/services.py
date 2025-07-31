@@ -5,11 +5,17 @@ from .models import ClioUser, ClioMatter
 
 
 class ClioAPIService:
-    BASE_URL = "https://app.clio.com/api/v4"
+    REGIONS = {
+        'NA': 'https://app.clio.com',
+        'EU': 'https://eu.app.clio.com',
+        'CA': 'https://ca.app.clio.com'
+    }
 
     def __init__(self, user_email):
         self.user = ClioUser.objects.get(email=user_email)
         self._check_token_expiry()
+        # Default to NA if not specified
+        self.base_url = self.REGIONS.get(self.user.region, self.REGIONS['NA'])
 
     def _check_token_expiry(self):
         """Check if token is expired and refresh if needed"""
@@ -19,7 +25,7 @@ class ClioAPIService:
     def _refresh_token(self):
         """Refresh the access token using refresh token"""
         response = requests.post(
-            "https://app.clio.com/oauth/token",
+            f"{self.base_url}/oauth/token",
             data={
                 "client_id": settings.CLIO_CLIENT_ID,
                 "client_secret": settings.CLIO_CLIENT_SECRET,
@@ -45,7 +51,7 @@ class ClioAPIService:
             "Content-Type": "application/json"
         }
 
-        url = f"{self.BASE_URL}/{endpoint}"
+        url = f"{self.base_url}/api/v4/{endpoint}"
 
         if method == "GET":
             response = requests.get(url, headers=headers)
