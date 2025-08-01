@@ -321,6 +321,10 @@ class ClioAuthView(APIView):
         logger.info(
             f"Generated auth URL (client_id hidden): {auth_url.replace(settings.CLIO_CLIENT_ID, 'CLIENT_ID')}")
 
+        # Add manual test instruction
+        logger.info(f"MANUAL TEST: Copy this URL and test in browser:")
+        logger.info(f"Auth URL: {auth_url}")
+
         return Response({
             "auth_url": auth_url
         }, headers={
@@ -334,20 +338,56 @@ class ClioAuthView(APIView):
 class ClioCallbackView(APIView):
     """Handle Clio OAuth callback"""
 
+    def options(self, request, *args, **kwargs):
+        """Handle CORS preflight requests for callback"""
+        logger.info("OPTIONS request received on callback endpoint")
+        response = JsonResponse({'status': 'ok'})
+        response['Access-Control-Allow-Origin'] = '*'
+        response['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        response['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        return response
+
     def get(self, request):
         """Exchange authorization code for access token"""
+        # Add extensive debugging
+        logger.info(f"=== CLIO CALLBACK RECEIVED ===")
+        logger.info(f"SUCCESS: Callback URL was hit!")
+        logger.info(f"Full request URL: {request.build_absolute_uri()}")
+        logger.info(f"Query parameters: {dict(request.GET)}")
+        logger.info(f"Headers: {dict(request.headers)}")
+        logger.info(f"Request method: {request.method}")
+        logger.info(f"Request path: {request.path}")
+
         code = request.GET.get('code')
+        error = request.GET.get('error')
+        error_description = request.GET.get('error_description')
+
         base_url = 'https://app.clio.com'  # Always use NA region
 
         logger.info(
             f"Received OAuth callback with code: {code[:5] if code else 'None'}...")
 
+        # Check for OAuth errors first
+        if error:
+            logger.error(f"OAuth error received: {error}")
+            logger.error(f"OAuth error description: {error_description}")
+            response = JsonResponse({
+                "status": "error",
+                "error": error,
+                "error_description": error_description or "OAuth authentication failed"
+            }, status=400)
+            response['Access-Control-Allow-Origin'] = '*'
+            return response
+
         if not code:
             logger.error("No authorization code provided in callback")
-            return Response(
-                {"error": "No authorization code provided"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            response = JsonResponse({
+                "status": "error",
+                "error": "no_code",
+                "error_description": "No authorization code provided"
+            }, status=400)
+            response['Access-Control-Allow-Origin'] = '*'
+            return response
 
         try:
             # Exchange code for tokens
@@ -370,10 +410,12 @@ class ClioCallbackView(APIView):
             if token_response.status_code != 200:
                 error_msg = token_response.text
                 logger.error(f"Token exchange failed: {error_msg}")
-                return Response(
-                    {"error": f"Failed to get access token: {error_msg}"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                response = JsonResponse({
+                    "status": "error",
+                    "error": f"Failed to get access token: {error_msg}"
+                }, status=400)
+                response['Access-Control-Allow-Origin'] = '*'
+                return response
 
             token_data = token_response.json()
             logger.info("Successfully got token data")
@@ -392,10 +434,12 @@ class ClioCallbackView(APIView):
             if user_response.status_code != 200:
                 error_msg = user_response.text
                 logger.error(f"Failed to get user info: {error_msg}")
-                return Response(
-                    {"error": f"Failed to get user info: {error_msg}"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+                response = JsonResponse({
+                    "status": "error",
+                    "error": f"Failed to get user info: {error_msg}"
+                }, status=400)
+                response['Access-Control-Allow-Origin'] = '*'
+                return response
 
             user_data = user_response.json()
             logger.info(f"User data response: {json.dumps(user_data)}")
@@ -419,10 +463,12 @@ class ClioCallbackView(APIView):
 
             except (KeyError, ValueError) as e:
                 logger.error(f"Error parsing user data: {str(e)}")
-                return Response(
-                    {"error": f"Failed to parse user data: {str(e)}"},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
+                response = JsonResponse({
+                    "status": "error",
+                    "error": f"Failed to parse user data: {str(e)}"
+                }, status=500)
+                response['Access-Control-Allow-Origin'] = '*'
+                return response
 
             # Save or update user tokens
             user, created = ClioUser.objects.update_or_create(
@@ -439,20 +485,43 @@ class ClioCallbackView(APIView):
             logger.info(f"{action} ClioUser record for {email}")
 
             # Return JSON response instead of redirect
-            return JsonResponse({
+            response = JsonResponse({
                 "message": "Authentication successful",
                 "email": email,
                 "status": "success"
             })
+            response['Access-Control-Allow-Origin'] = '*'
+            return response
 
         except Exception as e:
             logger.error(f"Clio authentication error: {str(e)}")
-            return JsonResponse({
+            response = JsonResponse({
                 "error": str(e),
                 "status": "error"
             }, status=500)
+            response['Access-Control-Allow-Origin'] = '*'
+            return response
 
 # Add test endpoint to manually create/update Clio user
+
+
+class ClioConfigTestView(APIView):
+    """Test endpoint to verify Clio configuration"""
+
+    def get(self, request):
+        """Check if Clio environment variables are properly configured"""
+        config_status = {
+            "clio_client_id": bool(settings.CLIO_CLIENT_ID),
+            "clio_client_secret": bool(settings.CLIO_CLIENT_SECRET),
+            "clio_redirect_uri": settings.CLIO_REDIRECT_URI,
+            "client_id_length": len(settings.CLIO_CLIENT_ID) if settings.CLIO_CLIENT_ID else 0,
+            "client_id_preview": settings.CLIO_CLIENT_ID[:5] + "..." if settings.CLIO_CLIENT_ID else "Not set",
+            "auth_url_test": f"https://app.clio.com/oauth/authorize?client_id={settings.CLIO_CLIENT_ID[:5]}...&response_type=code&redirect_uri={settings.CLIO_REDIRECT_URI}" if settings.CLIO_CLIENT_ID else "Cannot generate - missing client ID"
+        }
+
+        response = JsonResponse(config_status)
+        response['Access-Control-Allow-Origin'] = '*'
+        return response
 
 
 class TestClioUserView(APIView):
