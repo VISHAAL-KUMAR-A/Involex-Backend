@@ -9,6 +9,11 @@ class ClioUser(models.Model):
     token_expires_at = models.DateTimeField()
     clio_user_id = models.CharField(max_length=100)
     email = models.EmailField(unique=True)
+    region = models.CharField(max_length=2, default='NA', choices=[
+        ('NA', 'North America'),
+        ('EU', 'Europe'),
+        ('CA', 'Canada')
+    ])
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -1,6 +1,7 @@
 import requests
 from datetime import datetime, timedelta
 from django.conf import settings
+from django.utils import timezone
 from .models import ClioUser, ClioMatter
 
 
@@ -19,7 +20,7 @@ class ClioAPIService:
 
     def _check_token_expiry(self):
         """Check if token is expired and refresh if needed"""
-        if self.user.token_expires_at <= datetime.now():
+        if self.user.token_expires_at <= timezone.now():
             self._refresh_token()
 
     def _refresh_token(self):
@@ -38,8 +39,7 @@ class ClioAPIService:
             data = response.json()
             self.user.access_token = data["access_token"]
             self.user.refresh_token = data["refresh_token"]
-            self.user.token_expires_at = datetime.now(
-            ) + timedelta(seconds=data["expires_in"])
+            self.user.token_expires_at = timezone.now() + timedelta(seconds=data["expires_in"])
             self.user.save()
         else:
             raise Exception("Failed to refresh Clio access token")

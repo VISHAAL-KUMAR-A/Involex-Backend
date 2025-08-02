@@ -6,6 +6,7 @@ from django.conf import settings
 import openai
 import time
 from datetime import datetime, timedelta
+from django.utils import timezone
 from .serializers import EmailSummarySerializer, EmailSummaryResponseSerializer
 from .services import ClioAPIService
 from .models import ClioUser
@@ -121,7 +122,7 @@ class EmailSummaryAPIView(APIView):
                     # Assuming 6 minutes (360 seconds) for email communication
                     clio_entry = clio_service.create_time_entry(
                         matter_id=matter_id,
-                        date=datetime.now(),
+                        date=timezone.now(),
                         duration=360,  # 6 minutes in seconds
                         description=billable_description,
                         # First 500 chars as note
@@ -476,7 +477,7 @@ class ClioCallbackView(APIView):
                 defaults={
                     'access_token': token_data['access_token'],
                     'refresh_token': token_data['refresh_token'],
-                    'token_expires_at': datetime.now() + timedelta(seconds=token_data['expires_in']),
+                    'token_expires_at': timezone.now() + timedelta(seconds=token_data['expires_in']),
                     'clio_user_id': clio_user_id
                 }
             )
@@ -550,7 +551,7 @@ class TestClioUserView(APIView):
                 defaults={
                     'access_token': access_token,
                     'refresh_token': refresh_token,
-                    'token_expires_at': datetime.now() + timedelta(days=14),  # Set expiry to 14 days
+                    'token_expires_at': timezone.now() + timedelta(days=14),  # Set expiry to 14 days
                     'clio_user_id': 'manual_test',  # Placeholder ID for manual creation
                     'region': region
                 }
@@ -664,7 +665,7 @@ class TestClioEntryView(APIView):
             # Create a test time entry
             entry = clio_service.create_time_entry(
                 matter_id=matter_id,
-                date=datetime.now(),
+                date=timezone.now(),
                 duration=360,  # 6 minutes
                 description="Test billable entry from Involex",
                 note="This is a test entry to verify Clio integration"
