@@ -39,7 +39,8 @@ class ClioAPIService:
             data = response.json()
             self.user.access_token = data["access_token"]
             self.user.refresh_token = data["refresh_token"]
-            self.user.token_expires_at = timezone.now() + timedelta(seconds=data["expires_in"])
+            self.user.token_expires_at = timezone.now(
+            ) + timedelta(seconds=data["expires_in"])
             self.user.save()
         else:
             raise Exception("Failed to refresh Clio access token")
@@ -93,5 +94,18 @@ class ClioAPIService:
 
     def get_matters(self, status="open"):
         """Get list of matters from Clio"""
-        response = self._make_request("GET", f"matters?status={status}")
-        return response.get("data", [])
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # Try to get more detailed matter information by including relationships
+        response = self._make_request(
+            "GET", f"matters?status={status}&include=client")
+        matters_data = response.get("data", [])
+
+        # Add debugging to see what data we're getting
+        logger.info(f"Raw matters response: {response}")
+        logger.info(f"Number of matters returned: {len(matters_data)}")
+        if matters_data:
+            logger.info(f"First matter structure: {matters_data[0]}")
+
+        return matters_data

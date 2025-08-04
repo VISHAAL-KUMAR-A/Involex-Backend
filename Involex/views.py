@@ -35,8 +35,17 @@ class EmailSummaryAPIView(APIView):
     API View to summarize emails using OpenAI GPT model and create Clio billable entries.
     """
 
+    def options(self, request, *args, **kwargs):
+        """Handle preflight OPTIONS requests"""
+        logger.info("📋 OPTIONS request received for email analysis")
+        response = Response(status=status.HTTP_200_OK)
+        response["Access-Control-Allow-Origin"] = "*"
+        response["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        response["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        return response
+
     def post(self, request):
-        logger.info(f"🔧 DEBUG: POST request received")
+        logger.info("📧 EMAIL ANALYSIS POST REQUEST RECEIVED")
         logger.info(f"🔧 DEBUG: Request headers: {dict(request.headers)}")
         logger.info(f"🔧 DEBUG: Request body: {request.body[:500]}...")
 
@@ -604,8 +613,22 @@ class ClioMattersView(APIView):
             clio_service = ClioAPIService(user_email)
             matters = clio_service.get_matters()
 
+            # Transform matter data to include description field for frontend compatibility
+            transformed_matters = []
+            for matter in matters:
+                transformed_matter = {
+                    "id": matter.get("id"),
+                    "display_number": matter.get("display_number", ""),
+                    # Use display_number as description
+                    "description": matter.get("display_number", "No description"),
+                    "etag": matter.get("etag", "")
+                }
+                transformed_matters.append(transformed_matter)
+
+            logger.info(f"Transformed matters: {transformed_matters}")
+
             return Response({
-                "matters": matters
+                "matters": transformed_matters
             })
 
         except Exception as e:
@@ -682,3 +705,87 @@ class TestClioEntryView(APIView):
                 {"error": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class UserPreferencesView(APIView):
+    """Manage user preferences including selected matter"""
+
+    def get(self, request):
+        """Get user preferences"""
+        user_email = request.GET.get('email')
+        if not user_email:
+            return Response(
+                {"error": "Email parameter required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = ClioUser.objects.get(email=user_email)
+            return Response({
+                "email": user.email,
+                "selected_matter_id": user.selected_matter_id,
+                "region": user.region
+            })
+        except ClioUser.DoesNotExist:
+            return Response(
+                {"error": "User not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+    def post(self, request):
+        """Save user preferences"""
+        user_email = request.data.get('email')
+        selected_matter_id = request.data.get('selected_matter_id')
+
+        if not user_email:
+            return Response(
+                {"error": "Email is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = ClioUser.objects.get(email=user_email)
+            if selected_matter_id is not None:
+                user.selected_matter_id = selected_matter_id
+            user.save()
+
+            logger.info(
+                f"Updated preferences for user {user_email}: selected_matter_id={selected_matter_id}")
+
+            return Response({
+                "message": "Preferences saved successfully",
+                "email": user.email,
+                "selected_matter_id": user.selected_matter_id
+            })
+        except ClioUser.DoesNotExist:
+            return Response(
+                {"error": "User not authenticated with Clio. Please login first."},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class TestEmailAnalysisView(APIView):
+    """Test endpoint to debug email analysis issues"""
+
+    def options(self, request, *args, **kwargs):
+        """Handle preflight OPTIONS requests"""
+        logger.info("📋 OPTIONS request received for test email analysis")
+        response = Response(status=status.HTTP_200_OK)
+        response["Access-Control-Allow-Origin"] = "*"
+        response["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        response["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        return response
+
+    def post(self, request):
+        """Simple test endpoint to verify POST requests work"""
+        logger.info("🧪 TEST EMAIL ANALYSIS POST REQUEST RECEIVED")
+        logger.info(f"Request data: {request.data}")
+
+        return Response({
+            "status": "success",
+            "message": "Test endpoint working",
+            "received_data": request.data,
+            "timestamp": timezone.now().isoformat()
+        })

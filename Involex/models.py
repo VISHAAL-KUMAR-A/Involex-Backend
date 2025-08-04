@@ -14,6 +14,8 @@ class ClioUser(models.Model):
         ('EU', 'Europe'),
         ('CA', 'Canada')
     ])
+    selected_matter_id = models.CharField(
+        max_length=100, blank=True, null=True, help_text="User's preferred matter for email analysis")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
