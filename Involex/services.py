@@ -1,3 +1,4 @@
+import json
 import requests
 from datetime import datetime, timedelta
 from django.conf import settings
@@ -139,8 +140,19 @@ class ClioAPIService:
             }
         }
 
-        logger.info(f"CLIO API: Time entry data: {data}")
-        return self._make_request("POST", "time_entries", data)
+        logger.info(
+            f"CLIO API: Time entry data being sent to POST /activities:")
+        logger.info(f"CLIO API: JSON payload: {json.dumps(data, indent=2)}")
+
+        try:
+            response = self._make_request("POST", "activities", data)
+            logger.info(f"SUCCESS: Time entry created successfully")
+            return response
+        except Exception as e:
+            logger.error(
+                f"FAILED: Time entry creation failed with error: {str(e)}")
+            logger.error(f"DEBUG: Full error details: {repr(e)}")
+            raise
 
     def get_matters(self, status="open"):
         """Get list of matters from Clio"""

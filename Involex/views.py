@@ -1019,3 +1019,70 @@ class DebugClioConnectionView(APIView):
                 "user_found": True,
                 "debug_failed": True
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class PostmanTimeEntryTestView(APIView):
+    """Simple endpoint for Postman API testing - just creates a time entry"""
+
+    def post(self, request):
+        """Create a simple time entry for Postman testing"""
+        try:
+            # Fixed test data - no complex logic
+            user_email = "john.wick@clio.user"
+            matter_id = "1719986882"
+
+            clio_service = ClioAPIService(user_email)
+
+            # Create time entry with our fixed API call
+            entry = clio_service.create_time_entry(
+                matter_id=matter_id,
+                date=timezone.now(),
+                duration=360,  # 6 minutes in seconds
+                description="Postman API Test - Time Entry Creation",
+                note="Testing time entry creation via API for Involex integration"
+            )
+
+            return Response({
+                "success": True,
+                "message": "Time entry created successfully via API",
+                "entry_id": entry.get('data', {}).get('id'),
+                "entry_data": entry.get('data', {})
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response({
+                "success": False,
+                "error": str(e),
+                "message": "Time entry creation failed"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class FetchTimeEntryDetailsView(APIView):
+    """Fetch details of a specific time entry by ID"""
+
+    def get(self, request):
+        """Get details of the created time entry"""
+        try:
+            user_email = "john.wick@clio.user"
+            entry_id = "7010091902"  # The ID from our successful creation
+
+            clio_service = ClioAPIService(user_email)
+
+            # Fetch the specific time entry details
+            entry_details = clio_service._make_request(
+                "GET", f"activities/{entry_id}")
+
+            return Response({
+                "success": True,
+                "message": f"Time entry {entry_id} details retrieved",
+                "entry_details": entry_details.get('data', {}),
+                "entry_attributes": entry_details.get('data', {}).get('attributes', {}),
+                "entry_relationships": entry_details.get('data', {}).get('relationships', {})
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({
+                "success": False,
+                "error": str(e),
+                "message": f"Failed to fetch time entry {entry_id}"
+            }, status=status.HTTP_400_BAD_REQUEST)

@@ -10,7 +10,9 @@ from .views import (
     ClioConfigTestView,
     UserPreferencesView,
     TestEmailAnalysisView,
-    DebugClioConnectionView
+    DebugClioConnectionView,
+    PostmanTimeEntryTestView,
+    FetchTimeEntryDetailsView
 )
 
 app_name = 'involex'
@@ -30,4 +32,8 @@ urlpatterns = [
          name='user_preferences'),
     path('clio/debug/', DebugClioConnectionView.as_view(),
          name='debug_clio_connection'),
+    path('clio/postman-test/', PostmanTimeEntryTestView.as_view(),
+         name='postman_time_entry_test'),
+    path('clio/fetch-entry/', FetchTimeEntryDetailsView.as_view(),
+         name='fetch_time_entry_details'),
 ]
