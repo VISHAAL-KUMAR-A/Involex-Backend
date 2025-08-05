@@ -714,22 +714,122 @@ class TestClioEntryView(APIView):
             )
 
         try:
+            # STEP 1: Just get user data from database (no Clio API calls yet)
+            user = ClioUser.objects.get(email=user_email)
+
+            logger.info(
+                f"🔧 SIMPLE DEBUG: Found user - ID: {user.clio_user_id}, Email: {user.email}, Region: {user.region}")
+
+            # STEP 2: Now test Clio API with the real user ID
             clio_service = ClioAPIService(user_email)
 
-            # Create a test time entry
-            entry = clio_service.create_time_entry(
-                matter_id=matter_id,
-                date=timezone.now(),
-                duration=360,  # 6 minutes
-                description="Test billable entry from Involex",
-                note="This is a test entry to verify Clio integration"
-            )
+            # Test 1: Check if user exists in Clio
+            try:
+                user_info = clio_service._make_request(
+                    "GET", f"users/{user.clio_user_id}")
+                user_name = user_info.get('data', {}).get('name', 'Unknown')
+                logger.info(f"SUCCESS: User exists in Clio: {user_name}")
+                user_test_result = {
+                    "status": "success", "user_name": user_name}
+            except Exception as e:
+                logger.error(f"FAILED: User not found in Clio: {str(e)}")
+                user_test_result = {"status": "failed", "error": str(e)}
 
+            # Test 2: Check if matter exists and is accessible
+            try:
+                matter_info = clio_service._make_request(
+                    "GET", f"matters/{matter_id}")
+                matter_name = matter_info.get('data', {}).get(
+                    'display_number', 'Unknown')
+                logger.info(f"SUCCESS: Matter exists: {matter_name}")
+                matter_test_result = {
+                    "status": "success", "matter_name": matter_name}
+            except Exception as e:
+                logger.error(f"FAILED: Matter not accessible: {str(e)}")
+                matter_test_result = {"status": "failed", "error": str(e)}
+
+            # STEP 3a: Test if Activities endpoint exists first
+            logger.info("TESTING: Checking if Activities endpoint exists")
+            try:
+                activities_response = clio_service._make_request(
+                    "GET", "activities?limit=1")
+                logger.info(
+                    "SUCCESS: Activities endpoint exists and is accessible")
+
+                endpoint_test_result = {
+                    "status": "success",
+                    "message": "Activities endpoint exists",
+                    "response_status": "200"
+                }
+            except Exception as endpoint_error:
+                logger.error(
+                    f"ERROR: Activities endpoint test failed: {str(endpoint_error)}")
+                endpoint_test_result = {
+                    "status": "failed",
+                    "error": str(endpoint_error),
+                    "message": "Activities endpoint does not exist or is not accessible"
+                }
+
+            # STEP 3b: Test time entry creation (only if endpoint exists)
+            if endpoint_test_result["status"] == "success":
+                logger.info("TESTING: Creating billable time entry")
+                try:
+                    entry = clio_service.create_time_entry(
+                        matter_id=matter_id,
+                        date=timezone.now(),
+                        duration=360,  # 6 minutes
+                        description="TEST: Email correspondence analysis via Involex extension",
+                        note="This is a test billable entry to verify Clio integration works"
+                    )
+
+                    logger.info(
+                        f"SUCCESS: Time entry created with ID: {entry.get('data', {}).get('id', 'Unknown')}")
+
+                    time_entry_test_result = {
+                        "status": "success",
+                        "entry_id": entry.get('data', {}).get('id', 'Unknown'),
+                        "entry_description": entry.get('data', {}).get('attributes', {}).get('description', 'Unknown')
+                    }
+                except Exception as time_entry_error:
+                    logger.error(
+                        f"ERROR: Time entry creation failed: {str(time_entry_error)}")
+                    time_entry_test_result = {
+                        "status": "failed",
+                        "error": str(time_entry_error)
+                    }
+            else:
+                time_entry_test_result = {
+                    "status": "skipped",
+                    "reason": "Activities endpoint not accessible"
+                }
+
+            # Return the final response
             return Response({
-                "message": "Test entry created successfully",
-                "entry": entry
+                "message": "User and Matter tests passed, Activities endpoint test completed",
+                "database_user_data": {
+                    "clio_user_id": user.clio_user_id,
+                    "email": user.email,
+                    "region": user.region,
+                    "selected_matter_id": user.selected_matter_id,
+                    "token_expires_at": user.token_expires_at.isoformat() if user.token_expires_at else None,
+                    "has_access_token": bool(user.access_token),
+                    "has_refresh_token": bool(user.refresh_token)
+                },
+                "clio_api_tests": {
+                    "user_lookup": user_test_result,
+                    "matter_lookup": matter_test_result,
+                    "activities_endpoint_test": endpoint_test_result,
+                    "time_entry_creation": time_entry_test_result
+                },
+                "requested_matter_id": matter_id,
+                "next_step": "Check test results"
             })
 
+        except ClioUser.DoesNotExist:
+            return Response(
+                {"error": f"No ClioUser found for email: {user_email}"},
+                status=status.HTTP_404_NOT_FOUND
+            )
         except Exception as e:
             logger.error(f"Error creating test entry: {str(e)}")
             return Response(

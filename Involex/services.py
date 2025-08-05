@@ -68,10 +68,10 @@ class ClioAPIService:
 
         url = f"{self.base_url}/api/v4/{endpoint}"
 
-        logger.info(f"🔧 CLIO API: Making {method} request to {url}")
-        logger.info(f"🔧 CLIO API: Headers: {headers}")
+        logger.info(f"CLIO API: Making {method} request to {url}")
+        logger.info(f"CLIO API: Headers: {headers}")
         if data:
-            logger.info(f"🔧 CLIO API: Request data: {data}")
+            logger.info(f"CLIO API: Request data: {data}")
 
         if method == "GET":
             response = requests.get(url, headers=headers)
@@ -80,9 +80,9 @@ class ClioAPIService:
         else:
             raise ValueError(f"Unsupported HTTP method: {method}")
 
-        logger.info(f"🔧 CLIO API: Response status: {response.status_code}")
-        logger.info(f"🔧 CLIO API: Response headers: {dict(response.headers)}")
-        logger.info(f"🔧 CLIO API: Response text: {response.text[:500]}...")
+        logger.info(f"CLIO API: Response status: {response.status_code}")
+        logger.info(f"CLIO API: Response headers: {dict(response.headers)}")
+        logger.info(f"CLIO API: Response text: {response.text[:500]}...")
 
         if response.status_code in [200, 201]:
             return response.json()
@@ -114,14 +114,13 @@ class ClioAPIService:
 
         data = {
             "data": {
-                "type": "time_entries",
+                "type": "TimeEntry",  # FIXED: Must be TimeEntry at top level, not activities
                 "attributes": {
                     "date": date.strftime("%Y-%m-%d"),
-                    "duration": duration,  # in seconds
+                    "quantity": duration,  # Clio API v4.0.4+ expects quantity in seconds
                     "description": description,
-                    "note": note or "",
-                    "quantity": duration / 3600.0,  # Convert seconds to hours
-                    "type": "TimeEntry"
+                    "note": note or ""
+                    # FIXED: Removed "type" from attributes - it doesn't belong here
                 },
                 "relationships": {
                     "matter": {
@@ -129,12 +128,18 @@ class ClioAPIService:
                             "type": "matters",
                             "id": str(matter_id)
                         }
+                    },
+                    "user": {
+                        "data": {
+                            "type": "users",
+                            "id": str(self.user.clio_user_id)
+                        }
                     }
                 }
             }
         }
 
-        logger.info(f"🔧 Time entry data: {data}")
+        logger.info(f"CLIO API: Time entry data: {data}")
         return self._make_request("POST", "time_entries", data)
 
     def get_matters(self, status="open"):
