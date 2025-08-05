@@ -1064,7 +1064,7 @@ class FetchTimeEntryDetailsView(APIView):
         """Get details of the created time entry"""
         try:
             user_email = "john.wick@clio.user"
-            entry_id = "7010091902"  # The ID from our successful creation
+            entry_id = "7010146637"  # The ID from our most recent successful creation
 
             clio_service = ClioAPIService(user_email)
 
