@@ -9,7 +9,8 @@ from .views import (
     ClioLogoutView,
     ClioConfigTestView,
     UserPreferencesView,
-    TestEmailAnalysisView
+    TestEmailAnalysisView,
+    DebugClioConnectionView
 )
 
 app_name = 'involex'
@@ -27,4 +28,6 @@ urlpatterns = [
     path('clio/config-test/', ClioConfigTestView.as_view(), name='clio_config_test'),
     path('clio/preferences/', UserPreferencesView.as_view(),
          name='user_preferences'),
+    path('clio/debug/', DebugClioConnectionView.as_view(),
+         name='debug_clio_connection'),
 ]

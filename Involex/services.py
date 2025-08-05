@@ -20,8 +20,19 @@ class ClioAPIService:
 
     def _check_token_expiry(self):
         """Check if token is expired and refresh if needed"""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        logger.info(f"🔧 Token expires at: {self.user.token_expires_at}")
+        logger.info(f"🔧 Current time: {timezone.now()}")
+        logger.info(
+            f"🔧 Token expired: {self.user.token_expires_at <= timezone.now()}")
+
         if self.user.token_expires_at <= timezone.now():
+            logger.info("🔧 Token expired, refreshing...")
             self._refresh_token()
+        else:
+            logger.info("✅ Token is still valid")
 
     def _refresh_token(self):
         """Refresh the access token using refresh token"""
@@ -47,12 +58,20 @@ class ClioAPIService:
 
     def _make_request(self, method, endpoint, data=None):
         """Make authenticated request to Clio API"""
+        import logging
+        logger = logging.getLogger(__name__)
+
         headers = {
             "Authorization": f"Bearer {self.user.access_token}",
             "Content-Type": "application/json"
         }
 
         url = f"{self.base_url}/api/v4/{endpoint}"
+
+        logger.info(f"🔧 CLIO API: Making {method} request to {url}")
+        logger.info(f"🔧 CLIO API: Headers: {headers}")
+        if data:
+            logger.info(f"🔧 CLIO API: Request data: {data}")
 
         if method == "GET":
             response = requests.get(url, headers=headers)
@@ -61,6 +80,10 @@ class ClioAPIService:
         else:
             raise ValueError(f"Unsupported HTTP method: {method}")
 
+        logger.info(f"🔧 CLIO API: Response status: {response.status_code}")
+        logger.info(f"🔧 CLIO API: Response headers: {dict(response.headers)}")
+        logger.info(f"🔧 CLIO API: Response text: {response.text[:500]}...")
+
         if response.status_code in [200, 201]:
             return response.json()
         else:
@@ -68,6 +91,27 @@ class ClioAPIService:
 
     def create_time_entry(self, matter_id, date, duration, description, note=None):
         """Create a billable time entry in Clio"""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        logger.info(f"🔧 Creating time entry for matter_id: {matter_id}")
+
+        # First, let's verify the matter exists
+        try:
+            matter_check = self._make_request("GET", f"matters/{matter_id}")
+            logger.info(
+                f"✅ Matter exists: {matter_check.get('data', {}).get('display_number', 'Unknown')}")
+        except Exception as e:
+            logger.error(f"❌ Matter verification failed: {str(e)}")
+            # Let's try to get all matters to see what's available
+            try:
+                all_matters = self._make_request("GET", "matters")
+                logger.info(
+                    f"Available matters: {[m.get('id') for m in all_matters.get('data', [])]}")
+            except Exception as e2:
+                logger.error(f"❌ Could not fetch matters: {str(e2)}")
+            raise Exception(f"Matter {matter_id} not found or accessible")
+
         data = {
             "data": {
                 "type": "time_entries",
@@ -90,6 +134,7 @@ class ClioAPIService:
             }
         }
 
+        logger.info(f"🔧 Time entry data: {data}")
         return self._make_request("POST", "time_entries", data)
 
     def get_matters(self, status="open"):

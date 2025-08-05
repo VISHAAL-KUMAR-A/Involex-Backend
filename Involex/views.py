@@ -110,18 +110,30 @@ class EmailSummaryAPIView(APIView):
 
             # Create Clio time entry if matter_id is provided
             clio_entry = None
+            clio_entry_error = None
+
+            logger.info(
+                f"🔧 DEBUG: Checking Clio entry creation - matter_id: {matter_id}, sender_email: {sender_email}")
+
             if matter_id and sender_email:
                 try:
+                    logger.info(
+                        f"🔧 DEBUG: Attempting to create Clio billable entry for matter {matter_id}")
+
                     # Try to get existing user with correct region
                     try:
                         user = ClioUser.objects.get(email=sender_email)
+                        logger.info(
+                            f"✅ DEBUG: Found ClioUser for email: {sender_email}")
                         # Update region if different
                         if user.region != region:
                             user.region = region
                             user.save()
+                            logger.info(
+                                f"🔧 DEBUG: Updated user region to: {region}")
                     except ClioUser.DoesNotExist:
                         logger.error(
-                            f"No ClioUser found for email: {sender_email}")
+                            f"❌ ERROR: No ClioUser found for email: {sender_email}")
                         return Response(
                             {"error": "User not authenticated with Clio. Please login first."},
                             status=status.HTTP_401_UNAUTHORIZED
@@ -137,10 +149,27 @@ class EmailSummaryAPIView(APIView):
                         # First 500 chars as note
                         note=f"Original email content:\n{email_content[:500]}..."
                     )
+
+                    if clio_entry:
+                        logger.info(
+                            f"✅ SUCCESS: Clio billable entry created successfully: {clio_entry.get('data', {}).get('id', 'Unknown ID')}")
+                    else:
+                        logger.warning(
+                            f"⚠️ WARNING: Clio entry creation returned None")
+
                 except Exception as e:
-                    logger.error(f"Failed to create Clio entry: {str(e)}")
+                    logger.error(
+                        f"❌ ERROR: Failed to create Clio entry: {str(e)}")
+                    clio_entry_error = str(e)
                     # Don't fail the whole request if Clio integration fails
                     pass
+            else:
+                if not matter_id:
+                    logger.warning(
+                        f"⚠️ WARNING: No matter_id provided - skipping Clio entry creation")
+                if not sender_email:
+                    logger.warning(
+                        f"⚠️ WARNING: No sender_email provided - skipping Clio entry creation")
 
             processing_time = time.time() - start_time
 
@@ -151,7 +180,9 @@ class EmailSummaryAPIView(APIView):
                 "word_count_summary": summary_word_count,
                 "billable_description": billable_description,
                 "processing_time": round(processing_time, 2),
-                "clio_entry_created": bool(clio_entry)
+                "clio_entry_created": bool(clio_entry),
+                "clio_entry_id": clio_entry.get('data', {}).get('id') if clio_entry else None,
+                "clio_entry_error": clio_entry_error
             }
 
             # Validate response data
@@ -789,3 +820,102 @@ class TestEmailAnalysisView(APIView):
             "received_data": request.data,
             "timestamp": timezone.now().isoformat()
         })
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class DebugClioConnectionView(APIView):
+    """Debug endpoint to test Clio connection and matter access"""
+
+    def post(self, request):
+        """Test Clio connection for a specific user and matter"""
+        user_email = request.data.get('email')
+        matter_id = request.data.get('matter_id')
+
+        if not user_email:
+            return Response(
+                {"error": "Email is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Check if user exists
+            user = ClioUser.objects.get(email=user_email)
+            logger.info(f"✅ Found user: {user.email}")
+
+            # Test Clio connection
+            clio_service = ClioAPIService(user_email)
+
+            # Test basic API access
+            try:
+                user_info = clio_service._make_request("GET", "users/who_am_i")
+                logger.info(
+                    f"✅ API connection successful: {user_info.get('data', {}).get('name', 'Unknown')}")
+            except Exception as e:
+                logger.error(f"❌ API connection failed: {str(e)}")
+                return Response({
+                    "error": "Clio API connection failed",
+                    "details": str(e),
+                    "user_found": True,
+                    "api_connection": False
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Test matter access
+            matters_result = {"matters_accessible": False, "matter_ids": []}
+            try:
+                matters = clio_service.get_matters()
+                matter_ids = [m.get('id') for m in matters]
+                matters_result = {
+                    "matters_accessible": True,
+                    "matter_count": len(matters),
+                    "matter_ids": matter_ids,
+                    "target_matter_exists": matter_id in matter_ids if matter_id else None
+                }
+                logger.info(f"✅ Found {len(matters)} matters: {matter_ids}")
+            except Exception as e:
+                logger.error(f"❌ Could not fetch matters: {str(e)}")
+                matters_result["error"] = str(e)
+
+            # Test specific matter if provided
+            matter_result = {}
+            if matter_id:
+                try:
+                    matter = clio_service._make_request(
+                        "GET", f"matters/{matter_id}")
+                    matter_result = {
+                        "matter_accessible": True,
+                        "matter_display_number": matter.get('data', {}).get('display_number', 'Unknown')
+                    }
+                    logger.info(f"✅ Matter {matter_id} accessible")
+                except Exception as e:
+                    matter_result = {
+                        "matter_accessible": False,
+                        "error": str(e)
+                    }
+                    logger.error(
+                        f"❌ Matter {matter_id} not accessible: {str(e)}")
+
+            return Response({
+                "user_found": True,
+                "api_connection": True,
+                "user_email": user.email,
+                "token_expires": user.token_expires_at,
+                "token_expired": user.token_expires_at <= timezone.now(),
+                **matters_result,
+                **matter_result
+            })
+
+        except ClioUser.DoesNotExist:
+            logger.error(f"❌ User not found: {user_email}")
+            return Response({
+                "error": "User not found in database",
+                "user_found": False,
+                "available_users": [u.email for u in ClioUser.objects.all()]
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        except Exception as e:
+            logger.error(f"❌ Debug failed: {str(e)}")
+            return Response({
+                "error": str(e),
+                "user_found": True,
+                "debug_failed": True
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

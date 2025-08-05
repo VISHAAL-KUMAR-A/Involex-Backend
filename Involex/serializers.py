@@ -10,9 +10,19 @@ class EmailSummarySerializer(serializers.Serializer):
         required=False,
         help_text="Email address of the sender"
     )
+    # Accept 'sender' as an alternative to 'sender_email' for frontend compatibility
+    sender = serializers.EmailField(
+        required=False,
+        help_text="Email address of the sender (alternative field name)"
+    )
     recipient_email = serializers.EmailField(
         required=False,
         help_text="Email address of the recipient"
+    )
+    # Accept 'recipient' as an alternative to 'recipient_email' for frontend compatibility
+    recipient = serializers.EmailField(
+        required=False,
+        help_text="Email address of the recipient (alternative field name)"
     )
     subject = serializers.CharField(
         required=False,
@@ -54,3 +64,9 @@ class EmailSummaryResponseSerializer(serializers.Serializer):
         help_text="Time taken to process the request in seconds")
     clio_entry_created = serializers.BooleanField(
         help_text="Whether a billable entry was created in Clio")
+    clio_entry_id = serializers.CharField(
+        required=False, allow_null=True,
+        help_text="ID of the created Clio billable entry")
+    clio_entry_error = serializers.CharField(
+        required=False, allow_null=True,
+        help_text="Error message if Clio entry creation failed")
