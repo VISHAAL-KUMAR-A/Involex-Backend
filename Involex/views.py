@@ -1086,3 +1086,173 @@ class FetchTimeEntryDetailsView(APIView):
                 "error": str(e),
                 "message": f"Failed to fetch time entry {entry_id}"
             }, status=status.HTTP_400_BAD_REQUEST)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class CreateBillableEntryView(APIView):
+    """API endpoint for Chrome extension to create billable entries in Clio"""
+
+    def options(self, request, *args, **kwargs):
+        """Handle preflight OPTIONS requests for Chrome extension"""
+        logger.info("📋 OPTIONS request received for billable entry creation")
+        response = Response(status=status.HTTP_200_OK)
+        response["Access-Control-Allow-Origin"] = "*"
+        response["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        response["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        return response
+
+    def post(self, request):
+        """Create a billable time entry from analyzed email data"""
+        logger.info(
+            "🔥 CHROME EXTENSION: Billable entry creation request received")
+        logger.info(f"Request data: {request.data}")
+
+        # Extract required parameters
+        user_email = request.data.get('user_email')
+        analyzed_email_description = request.data.get(
+            'email_description')  # Analyzed email summary
+        # Can be provided or use user preference
+        matter_id = request.data.get('matter_id')
+        # Default rate if not provided
+        billable_rate = request.data.get('rate', 150.0)
+        duration_minutes = request.data.get(
+            'duration_minutes', 6)  # Default 6 minutes
+        email_subject = request.data.get('email_subject', '')
+        sender_email = request.data.get('sender_email', '')
+        recipient_email = request.data.get('recipient_email', '')
+
+        # Validate required fields
+        if not user_email:
+            return Response({
+                "error": "user_email is required",
+                "status": "error"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        if not analyzed_email_description:
+            return Response({
+                "error": "email_description is required",
+                "status": "error"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            # Check if user exists and is authenticated
+            try:
+                user = ClioUser.objects.get(email=user_email)
+                logger.info(f"✅ Found authenticated user: {user_email}")
+            except ClioUser.DoesNotExist:
+                logger.error(f"❌ User not authenticated: {user_email}")
+                return Response({
+                    "error": "User not authenticated with Clio. Please login first.",
+                    "status": "error",
+                    "auth_required": True
+                }, status=status.HTTP_401_UNAUTHORIZED)
+
+            # If no matter_id provided, use user's selected matter from preferences
+            if not matter_id:
+                if user.selected_matter_id:
+                    matter_id = user.selected_matter_id
+                    logger.info(
+                        f"🔧 Using user's preferred matter: {matter_id}")
+                else:
+                    return Response({
+                        "error": "No matter specified and user has no default matter set",
+                        "status": "error",
+                        "need_matter_selection": True
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Create professional billable description
+            if sender_email and recipient_email:
+                parties = f"Email correspondence with {recipient_email}"
+            elif sender_email:
+                parties = f"Email correspondence from {sender_email}"
+            else:
+                parties = "Email correspondence"
+
+            subject_text = f" regarding {email_subject}" if email_subject else ""
+            billable_description = f"{parties}{subject_text}. {analyzed_email_description}"
+
+            # Create Clio time entry
+            clio_service = ClioAPIService(user_email)
+
+            # Convert minutes to seconds for Clio API
+            duration_seconds = duration_minutes * 60
+
+            logger.info(f"🔧 Creating billable entry:")
+            logger.info(f"   Matter ID: {matter_id}")
+            logger.info(
+                f"   Duration: {duration_minutes} minutes ({duration_seconds} seconds)")
+            logger.info(f"   Rate: ${billable_rate}/hr")
+            logger.info(f"   Description: {billable_description[:100]}...")
+
+            clio_entry = clio_service.create_time_entry(
+                matter_id=matter_id,
+                date=timezone.now(),
+                duration=duration_seconds,
+                description=billable_description,
+                note=f"Created via Involex Chrome Extension. Rate: ${billable_rate}/hr"
+            )
+
+            if clio_entry:
+                entry_id = clio_entry.get('data', {}).get('id')
+                logger.info(
+                    f"✅ SUCCESS: Billable entry created with ID: {entry_id}")
+
+                return Response({
+                    "status": "success",
+                    "message": "Billable entry created successfully",
+                    "entry_id": entry_id,
+                    "matter_id": matter_id,
+                    "duration_minutes": duration_minutes,
+                    "rate": billable_rate,
+                    "description": billable_description,
+                    "clio_entry_data": clio_entry.get('data', {})
+                }, status=status.HTTP_201_CREATED)
+            else:
+                logger.error("❌ Clio entry creation returned None")
+                return Response({
+                    "error": "Failed to create billable entry - unknown error",
+                    "status": "error"
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        except Exception as e:
+            logger.error(f"❌ ERROR creating billable entry: {str(e)}")
+            return Response({
+                "error": str(e),
+                "status": "error"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def get(self, request):
+        """GET method to provide API documentation for Chrome extension"""
+        return Response({
+            "message": "Chrome Extension Billable Entry API",
+            "description": "POST analyzed email data to create billable time entries in Clio",
+            "endpoint": "/api/clio/create-billable/",
+            "method": "POST",
+            "required_fields": ["user_email", "email_description"],
+            "optional_fields": [
+                "matter_id (uses user preference if not provided)",
+                "rate (default: 150.0)",
+                "duration_minutes (default: 6)",
+                "email_subject",
+                "sender_email",
+                "recipient_email"
+            ],
+            "example_request": {
+                "user_email": "john.wick@clio.user",
+                "email_description": "Discussed contract terms and negotiation strategy with client",
+                "matter_id": "1719986882",
+                "rate": 250.0,
+                "duration_minutes": 10,
+                "email_subject": "Contract Review",
+                "sender_email": "client@company.com",
+                "recipient_email": "lawyer@lawfirm.com"
+            },
+            "response_example": {
+                "status": "success",
+                "message": "Billable entry created successfully",
+                "entry_id": 7012644961,
+                "matter_id": "1719986882",
+                "duration_minutes": 10,
+                "rate": 250.0
+            }
+        })

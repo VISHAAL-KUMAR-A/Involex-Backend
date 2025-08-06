@@ -12,7 +12,8 @@ from .views import (
     TestEmailAnalysisView,
     DebugClioConnectionView,
     PostmanTimeEntryTestView,
-    FetchTimeEntryDetailsView
+    FetchTimeEntryDetailsView,
+    CreateBillableEntryView
 )
 
 app_name = 'involex'
@@ -36,4 +37,6 @@ urlpatterns = [
          name='postman_time_entry_test'),
     path('clio/fetch-entry/', FetchTimeEntryDetailsView.as_view(),
          name='fetch_time_entry_details'),
+    path('clio/create-billable/', CreateBillableEntryView.as_view(),
+         name='create_billable_entry'),
 ]
