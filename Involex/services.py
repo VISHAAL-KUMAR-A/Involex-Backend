@@ -90,7 +90,7 @@ class ClioAPIService:
         else:
             raise Exception(f"Clio API error: {response.text}")
 
-    def create_time_entry(self, matter_id, date, duration, description, note=None):
+    def create_time_entry(self, matter_id, date, duration, description, note=None, hourly_rate=None):
         """Create a billable time entry in Clio"""
         import logging
         logger = logging.getLogger(__name__)
@@ -113,16 +113,17 @@ class ClioAPIService:
                 logger.error(f"❌ Could not fetch matters: {str(e2)}")
             raise Exception(f"Matter {matter_id} not found or accessible")
 
+        # Use Clio API v4 format as shown in documentation
+        # Reference: https://docs.developers.clio.com/api-docs/fields/
         data = {
             "data": {
-                "type": "TimeEntry",  # FIXED: Must be TimeEntry at top level, not activities
-                "attributes": {
-                    "date": date.strftime("%Y-%m-%d"),
-                    "quantity": duration,  # Clio API v4.0.4+ expects quantity in seconds
-                    "description": description,
-                    "note": note or ""
-                    # FIXED: Removed "type" from attributes - it doesn't belong here
-                },
+                "date": date.strftime("%Y-%m-%d"),
+                "quantity": duration,  # Duration in seconds
+                "description": description,
+                "type": "TimeEntry",  # Required type field
+                "note": note or "",
+                # Include price (hourly rate) if provided
+                **({"price": hourly_rate} if hourly_rate else {}),
                 "relationships": {
                     "matter": {
                         "data": {

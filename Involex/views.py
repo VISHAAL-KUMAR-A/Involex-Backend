@@ -147,7 +147,8 @@ class EmailSummaryAPIView(APIView):
                         duration=360,  # 6 minutes in seconds
                         description=billable_description,
                         # First 500 chars as note
-                        note=f"Original email content:\n{email_content[:500]}..."
+                        note=f"Original email content:\n{email_content[:500]}...",
+                        hourly_rate=150.0  # Default rate for email summary
                     )
 
                     if clio_entry:
@@ -779,7 +780,8 @@ class TestClioEntryView(APIView):
                         date=timezone.now(),
                         duration=360,  # 6 minutes
                         description="TEST: Email correspondence analysis via Involex extension",
-                        note="This is a test billable entry to verify Clio integration works"
+                        note="This is a test billable entry to verify Clio integration works",
+                        hourly_rate=200.0  # Test rate
                     )
 
                     logger.info(
@@ -1039,7 +1041,8 @@ class PostmanTimeEntryTestView(APIView):
                 date=timezone.now(),
                 duration=360,  # 6 minutes in seconds
                 description="Postman API Test - Time Entry Creation",
-                note="Testing time entry creation via API for Involex integration"
+                note="Testing time entry creation via API for Involex integration",
+                hourly_rate=225.0  # Test rate for Postman
             )
 
             return Response({
@@ -1189,7 +1192,8 @@ class CreateBillableEntryView(APIView):
                 date=timezone.now(),
                 duration=duration_seconds,
                 description=billable_description,
-                note=f"Created via Involex Chrome Extension. Rate: ${billable_rate}/hr"
+                note=f"Created via Involex Chrome Extension. Rate: ${billable_rate}/hr",
+                hourly_rate=billable_rate
             )
 
             if clio_entry:
