@@ -37,7 +37,7 @@ class EmailSummaryAPIView(APIView):
 
     def options(self, request, *args, **kwargs):
         """Handle preflight OPTIONS requests"""
-        logger.info("📋 OPTIONS request received for email analysis")
+        logger.info("OPTIONS request received for email analysis")
         response = Response(status=status.HTTP_200_OK)
         response["Access-Control-Allow-Origin"] = "*"
         response["Access-Control-Allow-Methods"] = "POST, OPTIONS"
@@ -45,9 +45,9 @@ class EmailSummaryAPIView(APIView):
         return response
 
     def post(self, request):
-        logger.info("📧 EMAIL ANALYSIS POST REQUEST RECEIVED")
-        logger.info(f"🔧 DEBUG: Request headers: {dict(request.headers)}")
-        logger.info(f"🔧 DEBUG: Request body: {request.body[:500]}...")
+        logger.info("EMAIL ANALYSIS POST REQUEST RECEIVED")
+        logger.info(f"DEBUG: Request headers: {dict(request.headers)}")
+        logger.info(f"DEBUG: Request body: {request.body[:500]}...")
 
         start_time = time.time()
 
@@ -108,82 +108,47 @@ class EmailSummaryAPIView(APIView):
                 summary, sender_email, recipient_email, subject
             )
 
-            # Create Clio time entry if matter_id is provided
-            clio_entry = None
-            clio_entry_error = None
-
+            # Store AI analysis in cache for later retrieval by latest-ai-analysis API
+            # NO BILLABLE ENTRY CREATION HERE - Only analysis and caching
             logger.info(
-                f"🔧 DEBUG: Checking Clio entry creation - matter_id: {matter_id}, sender_email: {sender_email}")
+                "STORING AI ANALYSIS IN CACHE - No billable entry creation")
 
-            if matter_id and sender_email:
-                try:
-                    logger.info(
-                        f"🔧 DEBUG: Attempting to create Clio billable entry for matter {matter_id}")
+            try:
+                from django.core.cache import cache
+                cache_key = f"latest_ai_analysis_{sender_email}"
+                cache.set(cache_key, {
+                    'ai_summary': summary,
+                    'billable_description': billable_description,
+                    'sender_email': sender_email,
+                    'recipient_email': recipient_email,
+                    'email_subject': subject,
+                    # Store first 500 chars
+                    'email_content': email_content[:500],
+                    'analyzed_at': timezone.now().isoformat(),
+                    'word_count_original': original_word_count,
+                    'word_count_summary': summary_word_count
+                }, timeout=3600)  # Store for 1 hour
 
-                    # Try to get existing user with correct region
-                    try:
-                        user = ClioUser.objects.get(email=sender_email)
-                        logger.info(
-                            f"✅ DEBUG: Found ClioUser for email: {sender_email}")
-                        # Update region if different
-                        if user.region != region:
-                            user.region = region
-                            user.save()
-                            logger.info(
-                                f"🔧 DEBUG: Updated user region to: {region}")
-                    except ClioUser.DoesNotExist:
-                        logger.error(
-                            f"❌ ERROR: No ClioUser found for email: {sender_email}")
-                        return Response(
-                            {"error": "User not authenticated with Clio. Please login first."},
-                            status=status.HTTP_401_UNAUTHORIZED
-                        )
-
-                    clio_service = ClioAPIService(sender_email)
-                    # Assuming 6 minutes (360 seconds) for email communication
-                    clio_entry = clio_service.create_time_entry(
-                        matter_id=matter_id,
-                        date=timezone.now(),
-                        duration=360,  # 6 minutes in seconds
-                        description=billable_description,
-                        # First 500 chars as note
-                        note=f"Original email content:\n{email_content[:500]}...",
-                        hourly_rate=150.0  # Default rate for email summary
-                    )
-
-                    if clio_entry:
-                        logger.info(
-                            f"✅ SUCCESS: Clio billable entry created successfully: {clio_entry.get('data', {}).get('id', 'Unknown ID')}")
-                    else:
-                        logger.warning(
-                            f"⚠️ WARNING: Clio entry creation returned None")
-
-                except Exception as e:
-                    logger.error(
-                        f"❌ ERROR: Failed to create Clio entry: {str(e)}")
-                    clio_entry_error = str(e)
-                    # Don't fail the whole request if Clio integration fails
-                    pass
-            else:
-                if not matter_id:
-                    logger.warning(
-                        f"⚠️ WARNING: No matter_id provided - skipping Clio entry creation")
-                if not sender_email:
-                    logger.warning(
-                        f"⚠️ WARNING: No sender_email provided - skipping Clio entry creation")
+                logger.info(
+                    f"SUCCESS: AI analysis cached for user: {sender_email}")
+                logger.info(f"CACHE KEY: {cache_key}")
+                logger.info(f"AI SUMMARY: {summary[:100]}...")
+            except Exception as cache_error:
+                logger.error(
+                    f"ERROR: Failed to cache AI analysis: {cache_error}")
 
             processing_time = time.time() - start_time
 
-            # Prepare response
+            # Prepare response - NO CLIO ENTRY CREATION
             response_data = {
                 "summary": summary,
                 "word_count_original": original_word_count,
                 "word_count_summary": summary_word_count,
                 "billable_description": billable_description,
                 "processing_time": round(processing_time, 2),
-                "clio_entry_created": bool(clio_entry),
-                "clio_entry_id": clio_entry.get('data', {}).get('id') if clio_entry else None,
-                "clio_entry_error": clio_entry_error
+                "clio_entry_created": False,  # No billable entry created
+                "clio_entry_id": None,
+                "clio_entry_error": None
             }
 
             # Validate response data
@@ -276,17 +241,17 @@ def summarize_email_debug_view(request):
     Temporary debugging view for email summarization
     """
     # Add extensive debugging
-    logger.info(f"🔧 DEBUG: Request method: {request.method}")
-    logger.info(f"🔧 DEBUG: Request headers: {dict(request.headers)}")
-    logger.info(f"🔧 DEBUG: Request content type: {request.content_type}")
-    logger.info(f"🔧 DEBUG: Request body (raw): {request.body}")
+    logger.info(f"DEBUG: Request method: {request.method}")
+    logger.info(f"DEBUG: Request headers: {dict(request.headers)}")
+    logger.info(f"DEBUG: Request content type: {request.content_type}")
+    logger.info(f"DEBUG: Request body (raw): {request.body}")
 
     if request.method == 'POST':
         try:
             # Try to parse JSON
             if request.content_type == 'application/json':
                 data = json.loads(request.body)
-                logger.info(f"🔧 DEBUG: Parsed JSON data: {data}")
+                logger.info(f"DEBUG: Parsed JSON data: {data}")
 
                 # Check required fields
                 required_fields = ['email_content',
@@ -302,7 +267,7 @@ def summarize_email_debug_view(request):
                         'received_data': data
                     }, status=400)
 
-                logger.info(f"✅ DEBUG: All required fields present")
+                logger.info(f"DEBUG: All required fields present")
                 logger.info(
                     f"🔧 DEBUG: Email content: {data['email_content'][:100]}...")
 
@@ -904,7 +869,7 @@ class TestEmailAnalysisView(APIView):
 
     def options(self, request, *args, **kwargs):
         """Handle preflight OPTIONS requests"""
-        logger.info("📋 OPTIONS request received for test email analysis")
+        logger.info("OPTIONS request received for test email analysis")
         response = Response(status=status.HTTP_200_OK)
         response["Access-Control-Allow-Origin"] = "*"
         response["Access-Control-Allow-Methods"] = "POST, OPTIONS"
@@ -942,7 +907,7 @@ class DebugClioConnectionView(APIView):
         try:
             # Check if user exists
             user = ClioUser.objects.get(email=user_email)
-            logger.info(f"✅ Found user: {user.email}")
+            logger.info(f"SUCCESS: Found user: {user.email}")
 
             # Test Clio connection
             clio_service = ClioAPIService(user_email)
@@ -972,7 +937,8 @@ class DebugClioConnectionView(APIView):
                     "matter_ids": matter_ids,
                     "target_matter_exists": matter_id in matter_ids if matter_id else None
                 }
-                logger.info(f"✅ Found {len(matters)} matters: {matter_ids}")
+                logger.info(
+                    f"SUCCESS: Found {len(matters)} matters: {matter_ids}")
             except Exception as e:
                 logger.error(f"❌ Could not fetch matters: {str(e)}")
                 matters_result["error"] = str(e)
@@ -987,7 +953,7 @@ class DebugClioConnectionView(APIView):
                         "matter_accessible": True,
                         "matter_display_number": matter.get('data', {}).get('display_number', 'Unknown')
                     }
-                    logger.info(f"✅ Matter {matter_id} accessible")
+                    logger.info(f"SUCCESS: Matter {matter_id} accessible")
                 except Exception as e:
                     matter_result = {
                         "matter_accessible": False,
@@ -1097,32 +1063,94 @@ class CreateBillableEntryView(APIView):
 
     def options(self, request, *args, **kwargs):
         """Handle preflight OPTIONS requests for Chrome extension"""
-        logger.info("📋 OPTIONS request received for billable entry creation")
+        logger.info("OPTIONS request received for billable entry creation")
         response = Response(status=status.HTTP_200_OK)
         response["Access-Control-Allow-Origin"] = "*"
         response["Access-Control-Allow-Methods"] = "POST, OPTIONS"
         response["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
         return response
 
+    def _create_legal_summary_prompt(self, email_content, sender_email, recipient_email, subject):
+        """Create a prompt for legal email summarization"""
+        context = []
+        if sender_email:
+            context.append(f"From: {sender_email}")
+        if recipient_email:
+            context.append(f"To: {recipient_email}")
+        if subject:
+            context.append(f"Subject: {subject}")
+
+        context_str = "\n".join(context)
+
+        prompt = f"""Please analyze this legal email and create a concise, professional summary suitable for a billable time entry. Focus on the key legal activities, advice given, or matters discussed.
+
+Email Details:
+{context_str}
+
+Content:
+{email_content}
+
+Please provide a clear, specific summary that:
+1. Describes the main legal activity or service provided
+2. Mentions key topics discussed
+3. Is written in a professional, billable-entry style
+4. Is concise (2-3 sentences maximum)"""
+
+        return prompt
+
+    def _create_billable_description(self, summary, sender_email, recipient_email, subject):
+        """Create a formatted billable entry description"""
+        if sender_email and recipient_email:
+            parties = f"Email correspondence with {recipient_email}"
+        else:
+            parties = "Email correspondence"
+
+        subject_text = f" regarding {subject}" if subject else ""
+
+        billable_description = f"{parties}{subject_text}. {summary}"
+
+        return billable_description
+
     def post(self, request):
-        """Create a billable time entry from analyzed email data"""
+        """Create a billable time entry from analyzed email data or analyze content first"""
         logger.info(
-            "🔥 CHROME EXTENSION: Billable entry creation request received")
+            "CHROME EXTENSION: Billable entry creation request received")
         logger.info(f"Request data: {request.data}")
 
         # Extract required parameters
         user_email = request.data.get('user_email')
-        analyzed_email_description = request.data.get(
-            'email_description')  # Analyzed email summary
-        # Can be provided or use user preference
+        # Could be raw content or analyzed summary
+        email_description = request.data.get('email_description')
         matter_id = request.data.get('matter_id')
-        # Default rate if not provided
         billable_rate = request.data.get('rate', 150.0)
-        duration_minutes = request.data.get(
-            'duration_minutes', 6)  # Default 6 minutes
+        duration_minutes = request.data.get('duration_minutes', 6)
         email_subject = request.data.get('email_subject', '')
         sender_email = request.data.get('sender_email', '')
         recipient_email = request.data.get('recipient_email', '')
+
+        # NEW: Accept pre-analyzed billable_description from latest-ai-analysis API
+        provided_billable_description = request.data.get(
+            'billable_description')
+
+        # NEW: Flag to indicate if we should analyze the content with OpenAI first
+        analyze_content = request.data.get('analyze_content', False)
+
+        # PREVENT DUPLICATES: Check if this exact request was recently processed
+        from django.core.cache import cache
+        # Use email_description or billable_description for hash (whichever is provided)
+        description_for_hash = email_description or provided_billable_description or ""
+        request_hash = f"{user_email}_{description_for_hash[:50]}_{email_subject}_{analyze_content}"
+        duplicate_key = f"billable_request_{hash(request_hash)}"
+
+        if cache.get(duplicate_key):
+            logger.warning(f"DUPLICATE REQUEST BLOCKED: {request_hash[:100]}")
+            return Response({
+                "error": "Duplicate request detected. Please wait before sending another email.",
+                "status": "error"
+            }, status=status.HTTP_409_CONFLICT)
+
+        # Mark this request as processed for 30 seconds
+        cache.set(duplicate_key, True, timeout=30)
 
         # Validate required fields
         if not user_email:
@@ -1131,9 +1159,10 @@ class CreateBillableEntryView(APIView):
                 "status": "error"
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        if not analyzed_email_description:
+        # Require either email_description OR billable_description (from AI analysis)
+        if not email_description and not provided_billable_description:
             return Response({
-                "error": "email_description is required",
+                "error": "Either email_description or billable_description is required",
                 "status": "error"
             }, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1141,9 +1170,9 @@ class CreateBillableEntryView(APIView):
             # Check if user exists and is authenticated
             try:
                 user = ClioUser.objects.get(email=user_email)
-                logger.info(f"✅ Found authenticated user: {user_email}")
+                logger.info(f"SUCCESS: Found authenticated user: {user_email}")
             except ClioUser.DoesNotExist:
-                logger.error(f"❌ User not authenticated: {user_email}")
+                logger.error(f"ERROR: User not authenticated: {user_email}")
                 return Response({
                     "error": "User not authenticated with Clio. Please login first.",
                     "status": "error",
@@ -1163,16 +1192,118 @@ class CreateBillableEntryView(APIView):
                         "need_matter_selection": True
                     }, status=status.HTTP_400_BAD_REQUEST)
 
-            # Create professional billable description
-            if sender_email and recipient_email:
-                parties = f"Email correspondence with {recipient_email}"
-            elif sender_email:
-                parties = f"Email correspondence from {sender_email}"
-            else:
-                parties = "Email correspondence"
+            # Check if billable_description is provided (from latest-ai-analysis API)
+            if provided_billable_description:
+                # Use the pre-analyzed description from frontend (via latest-ai-analysis API)
+                logger.info(
+                    "USING PRE-ANALYZED DESCRIPTION from latest-ai-analysis API")
+                billable_description = provided_billable_description
+                logger.info(
+                    f"PRE-ANALYZED DESCRIPTION: {billable_description[:100]}...")
+            elif analyze_content:
+                logger.info(
+                    "STARTING AI ANALYSIS - This may take 10-15 seconds...")
+                try:
+                    # Initialize OpenAI client
+                    client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
 
-            subject_text = f" regarding {email_subject}" if email_subject else ""
-            billable_description = f"{parties}{subject_text}. {analyzed_email_description}"
+                    # Add timeout and retry logic for OpenAI API
+                    import time
+                    start_time = time.time()
+
+                    # Create the prompt for legal email summarization
+                    prompt = self._create_legal_summary_prompt(
+                        email_description, sender_email, recipient_email, email_subject
+                    )
+
+                    # Call OpenAI API
+                    response = client.chat.completions.create(
+                        model="gpt-3.5-turbo",
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": "You are a legal assistant helping lawyers create concise, professional summaries of client communications for billing purposes."
+                            },
+                            {
+                                "role": "user",
+                                "content": prompt
+                            }
+                        ],
+                        max_tokens=500,
+                        temperature=0.3
+                    )
+
+                    ai_summary = response.choices[0].message.content.strip()
+                    analysis_time = time.time() - start_time
+
+                    logger.info(
+                        f"SUCCESS: OpenAI analysis completed in {analysis_time:.2f} seconds")
+                    logger.info(f"FULL AI SUMMARY: {ai_summary}")
+
+                    # Ensure AI summary is not empty
+                    if not ai_summary or len(ai_summary.strip()) < 10:
+                        raise Exception(
+                            "AI analysis returned empty or too short summary")
+
+                    # Store AI analysis in database for the new API endpoint
+                    from django.core.cache import cache
+                    cache_key = f"latest_ai_analysis_{user_email}"
+                    cache.set(cache_key, {
+                        'ai_summary': ai_summary,
+                        'sender_email': sender_email,
+                        'recipient_email': recipient_email,
+                        'email_subject': email_subject,
+                        'analyzed_at': timezone.now().isoformat(),
+                        'billable_description': None  # Will be set below
+                    }, timeout=3600)  # Store for 1 hour
+
+                    # Create professional billable description using AI analysis
+                    billable_description = self._create_billable_description(
+                        ai_summary, sender_email, recipient_email, email_subject
+                    )
+
+                    # Validate billable description was created correctly
+                    if not billable_description or "Email correspondence" not in billable_description:
+                        logger.error(
+                            f"ERROR: Billable description creation failed!")
+                        logger.error(f"   AI Summary: {ai_summary}")
+                        logger.error(
+                            f"   Billable Description: {billable_description}")
+                        raise Exception(
+                            "Failed to create proper billable description from AI analysis")
+
+                    # Update cache with billable description
+                    cached_data = cache.get(cache_key)
+                    if cached_data:
+                        cached_data['billable_description'] = billable_description
+                        cache.set(cache_key, cached_data, timeout=3600)
+
+                    logger.info(
+                        f"AI ANALYSIS COMPLETE - SUMMARY: {ai_summary[:100]}...")
+                    logger.info(
+                        f"AI ANALYSIS COMPLETE - BILLABLE DESC: {billable_description[:100]}...")
+                    logger.info(
+                        f"NOW PROCEEDING TO CREATE CLIO ENTRY WITH AI ANALYSIS")
+
+                except Exception as e:
+                    logger.error(f"ERROR: OpenAI analysis failed: {str(e)}")
+                    return Response({
+                        "error": f"Failed to analyze email content: {str(e)}",
+                        "status": "error"
+                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            else:
+                # Use the provided description as-is (raw content - no analysis)
+                logger.info(
+                    "Using provided email description as raw content (no analysis)")
+                if sender_email and recipient_email:
+                    parties = f"Email correspondence with {recipient_email}"
+                elif sender_email:
+                    parties = f"Email correspondence from {sender_email}"
+                else:
+                    parties = "Email correspondence"
+
+                subject_text = f" regarding {email_subject}" if email_subject else ""
+                billable_description = f"{parties}{subject_text}. {email_description}"
 
             # Create Clio time entry
             clio_service = ClioAPIService(user_email)
@@ -1180,46 +1311,68 @@ class CreateBillableEntryView(APIView):
             # Convert minutes to seconds for Clio API
             duration_seconds = duration_minutes * 60
 
-            logger.info(f"🔧 Creating billable entry:")
+            logger.info(f"DEBUG: Creating billable entry:")
             logger.info(f"   Matter ID: {matter_id}")
             logger.info(
                 f"   Duration: {duration_minutes} minutes ({duration_seconds} seconds)")
             logger.info(f"   Rate: ${billable_rate}/hr")
-            logger.info(f"   Description: {billable_description[:100]}...")
+            logger.info(f"   Description (FULL): {billable_description}")
+
+            # FIXED: Put AI analysis in BOTH description and note fields since Clio displays note prominently
+            if provided_billable_description or analyze_content:
+                # For AI-analyzed content, put the analysis in BOTH fields
+                # AI analysis goes in note (what Clio displays)
+                note_content = billable_description
+                logger.info(
+                    f"   AI ANALYSIS IN BOTH DESCRIPTION AND NOTE: {billable_description[:100]}...")
+            else:
+                # For raw content, use simple note
+                note_content = f"Email entry created via Involex extension. Rate: ${billable_rate}/hr"
+
+            logger.info(f"   Note (FULL): {note_content}")
+
+            logger.info(f"FINAL DEBUG - SENDING TO CLIO:")
+            logger.info(
+                f"   description parameter: '{billable_description[:100]}...'")
+            logger.info(f"   note parameter: '{note_content[:100]}...'")
+            logger.info(
+                f"   Both fields contain AI analysis: {provided_billable_description or analyze_content}")
 
             clio_entry = clio_service.create_time_entry(
                 matter_id=matter_id,
                 date=timezone.now(),
                 duration=duration_seconds,
                 description=billable_description,
-                note=f"Created via Involex Chrome Extension. Rate: ${billable_rate}/hr",
+                note=note_content,
                 hourly_rate=billable_rate
             )
 
             if clio_entry:
                 entry_id = clio_entry.get('data', {}).get('id')
                 logger.info(
-                    f"✅ SUCCESS: Billable entry created with ID: {entry_id}")
+                    f"SUCCESS: Billable entry created with ID: {entry_id}")
 
                 return Response({
                     "status": "success",
-                    "message": "Billable entry created successfully",
+                    "message": "Billable entry created successfully with AI analysis" if analyze_content else "Billable entry created successfully",
                     "entry_id": entry_id,
                     "matter_id": matter_id,
                     "duration_minutes": duration_minutes,
                     "rate": billable_rate,
                     "description": billable_description,
+                    "analyzed_content": analyze_content,
+                    "ai_analysis_in_description": analyze_content,
                     "clio_entry_data": clio_entry.get('data', {})
                 }, status=status.HTTP_201_CREATED)
             else:
-                logger.error("❌ Clio entry creation returned None")
+                logger.error("ERROR: Clio entry creation returned None")
                 return Response({
                     "error": "Failed to create billable entry - unknown error",
                     "status": "error"
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         except Exception as e:
-            logger.error(f"❌ ERROR creating billable entry: {str(e)}")
+            logger.error(f"ERROR creating billable entry: {str(e)}")
             return Response({
                 "error": str(e),
                 "status": "error"
@@ -1229,7 +1382,7 @@ class CreateBillableEntryView(APIView):
         """GET method to provide API documentation for Chrome extension"""
         return Response({
             "message": "Chrome Extension Billable Entry API",
-            "description": "POST analyzed email data to create billable time entries in Clio",
+            "description": "POST email data to create billable time entries in Clio. Can analyze raw email content with AI or use pre-analyzed descriptions.",
             "endpoint": "/api/clio/create-billable/",
             "method": "POST",
             "required_fields": ["user_email", "email_description"],
@@ -1239,17 +1392,30 @@ class CreateBillableEntryView(APIView):
                 "duration_minutes (default: 6)",
                 "email_subject",
                 "sender_email",
-                "recipient_email"
+                "recipient_email",
+                "analyze_content (default: false) - Set to true to analyze raw email content with OpenAI"
             ],
-            "example_request": {
+            "example_request_with_analysis": {
                 "user_email": "john.wick@clio.user",
-                "email_description": "Discussed contract terms and negotiation strategy with client",
+                "email_description": "Hi John, Can you please review the attached contract and let me know your thoughts on the liability clauses? We need to finalize this by Friday. Thanks, Client",
+                "matter_id": "1719986882",
+                "rate": 325.0,
+                "duration_minutes": 12,
+                "email_subject": "Contract Review",
+                "sender_email": "client@company.com",
+                "recipient_email": "lawyer@lawfirm.com",
+                "analyze_content": True
+            },
+            "example_request_pre_analyzed": {
+                "user_email": "john.wick@clio.user",
+                "email_description": "Contract analysis and legal advice provided regarding liability clauses",
                 "matter_id": "1719986882",
                 "rate": 250.0,
                 "duration_minutes": 10,
                 "email_subject": "Contract Review",
                 "sender_email": "client@company.com",
-                "recipient_email": "lawyer@lawfirm.com"
+                "recipient_email": "lawyer@lawfirm.com",
+                "analyze_content": False
             },
             "response_example": {
                 "status": "success",
@@ -1257,6 +1423,64 @@ class CreateBillableEntryView(APIView):
                 "entry_id": 7012644961,
                 "matter_id": "1719986882",
                 "duration_minutes": 10,
-                "rate": 250.0
+                "rate": 250.0,
+                "analyzed_content": True,
+                "description": "Email correspondence with client@company.com regarding Contract Review. Contract analysis and legal advice provided regarding liability clauses with emphasis on risk mitigation strategies."
             }
         })
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class LatestAIAnalysisView(APIView):
+    """API endpoint to get the latest AI email analysis for a user"""
+
+    def options(self, request, *args, **kwargs):
+        """Handle preflight OPTIONS requests"""
+        logger.info("OPTIONS request received for latest AI analysis")
+        response = Response(status=status.HTTP_200_OK)
+        response["Access-Control-Allow-Origin"] = "*"
+        response["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+        response["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        return response
+
+    def get(self, request):
+        """Get the latest AI analysis for a user"""
+        user_email = request.GET.get('user_email')
+
+        if not user_email:
+            return Response({
+                "error": "user_email parameter required",
+                "status": "error"
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            # Get latest AI analysis from cache
+            from django.core.cache import cache
+            cache_key = f"latest_ai_analysis_{user_email}"
+            cached_data = cache.get(cache_key)
+
+            if not cached_data:
+                return Response({
+                    "error": "No recent AI analysis found for this user",
+                    "status": "error",
+                    "message": "Please send an email first to generate AI analysis"
+                }, status=status.HTTP_404_NOT_FOUND)
+
+            return Response({
+                "status": "success",
+                "data": {
+                    "ai_summary": cached_data['ai_summary'],
+                    "billable_description": cached_data['billable_description'],
+                    "sender_email": cached_data['sender_email'],
+                    "recipient_email": cached_data['recipient_email'],
+                    "email_subject": cached_data['email_subject'],
+                    "analyzed_at": cached_data['analyzed_at']
+                }
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error retrieving latest AI analysis: {str(e)}")
+            return Response({
+                "error": str(e),
+                "status": "error"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
